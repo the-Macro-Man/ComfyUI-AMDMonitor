@@ -14,14 +14,36 @@ No Python dependencies. No custom nodes. Frontend only.
 
 ## Features
 
+**GPU**
+
 - **VRAM per GPU** — works on ROCm, including multi-GPU and integrated Radeon graphics
 - **Peak VRAM per run** — the high-water mark, colour-coded, reset at the start of each job
+- **ComfyUI vs other VRAM** — how much the allocator holds versus everything else on the card
+- **VRAM graph** — a sparkline of the run, so you can see load spikes and decode plateaus
+
+**System**
+
+- **Swap** — memory spilled to disk; the reason a run suddenly crawls
+- **CPU** — total load and thread count
+- **Output disk free** — space left where ComfyUI writes results
+- **Disk / network rates** — read/write and up/down throughput
+
+**Run**
+
+- **Progress + ETA** — step *k of n* with a live estimate of time remaining
+- **Current node** — which part of the graph is executing right now
+- **Queue depth**, **run timer**, and **recent run history** with durations and peaks
+
+**Alerts**
+
 - **Finish notifications** — toast, desktop notification and chime with duration and peak
 - **Failure alerts** — distinct tone plus the error message
-- **Offload warning** — alerts mid-run when a GPU crosses the danger threshold
-- **Run timer** — elapsed time, and how long the last run took
-- **Everything toggleable** — eight switches behind a gear icon, persisted locally
-- Draggable, collapsible, remembers its position
+- **Offload warning** — fires mid-run when a GPU crosses the danger threshold
+
+**Interface**
+
+- **Every row has its own toggle** — 18 switches, grouped, persisted locally
+- Draggable, **resizable** (drag the right edge), collapsible, remembers position and width
 
 ## Install
 
@@ -97,22 +119,31 @@ on its own. Use **test alert** to confirm sound and permissions.
 
 ## Toggles
 
-Click the **⚙ gear**:
+Click the **⚙ gear**. Every row is independently switchable.
 
-| Toggle | Controls |
+| Group | Toggles |
 |---|---|
-| GPU bars | per-GPU VRAM rows |
-| System RAM | the RAM row |
-| Peak VRAM | `peak N GB` under each GPU |
-| Run timer | `running 4:12` / `last 12:47` footer |
-| Notify on finish | toast + desktop notification on completion |
-| Notify on error | same, for failures |
-| Sound | the chime |
-| Warn at high VRAM | mid-run offload-risk alert |
+| **Display** | GPU bars · ComfyUI vs other VRAM · VRAM graph · Peak VRAM · System RAM |
+| **System** | Swap · CPU · Output disk free · Disk / network rates |
+| **Run** | Progress + ETA · Current node · Queue depth · Run timer · Recent runs |
+| **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM |
 
-**reset peak** clears the high-water mark. **test alert** fires a sample notification.
+Three buttons: **reset peak** clears the high-water mark and graph, **test alert** fires a
+sample notification, **defaults** restores everything.
 
-Settings and panel position persist in `localStorage`.
+Settings, panel position and width all persist in `localStorage`.
+
+## Where the data comes from
+
+| Source | Provides | If unavailable |
+|---|---|---|
+| ComfyUI `/system_stats` | VRAM per device, system RAM | panel shows an error |
+| ComfyUI websocket events | progress, current node, queue, run start/end | those rows stay empty |
+| `/amdmonitor/stats` (this extension, psutil) | swap, CPU, disk, network | System rows are hidden automatically |
+
+The psutil route is read-only. It writes nothing and executes nothing. If psutil is
+missing the route still answers, reporting `available: false`, and the frontend simply
+hides those rows.
 
 ## Configuration
 
