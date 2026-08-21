@@ -1,5 +1,11 @@
 # ComfyUI-AMDMonitor
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-3da639.svg)](LICENSE)
+[![Comfy Registry](https://img.shields.io/badge/Comfy%20Registry-comfyui--amdmonitor-1a73e8)](https://registry.comfy.org/nodes/comfyui-amdmonitor)
+[![GPU](https://img.shields.io/badge/GPU-AMD%20%2F%20ROCm-ed1c24)](#why-nvml-based-monitors-cant-do-this)
+[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](#where-the-data-comes-from)
+[![Stars](https://img.shields.io/github/stars/the-Macro-Man/ComfyUI-AMDMonitor?style=flat&color=f0b400)](https://github.com/the-Macro-Man/ComfyUI-AMDMonitor/stargazers)
+
 VRAM monitoring and run notifications for **AMD / ROCm** GPUs in ComfyUI.
 
 Most ComfyUI resource monitors read GPU stats through **pynvml**, which is NVIDIA-only.
