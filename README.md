@@ -33,7 +33,7 @@ Search for **AMD Monitor** and install.
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/themacroman/ComfyUI-AMDMonitor
+git clone https://github.com/the-Macro-Man/ComfyUI-AMDMonitor
 ```
 
 Restart ComfyUI. A panel appears top-right.
