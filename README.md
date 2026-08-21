@@ -14,9 +14,16 @@ peak usage, and tells you when your render finishes.
 
 No Python dependencies. No custom nodes. Frontend only.
 
-<img width="210" height="188" alt="Screenshot 2026-08-21 170800" src="https://github.com/user-attachments/assets/9ec04f92-45a6-47d5-9e28-0f4d958eca5b" />
+<img width="280" height="373" alt="image" src="https://github.com/user-attachments/assets/24f695c5-14b5-4df4-b7c2-7d6193a7a2ec" />
 
-<img width="212" height="373" alt="image" src="https://github.com/user-attachments/assets/d4debbde-d621-4065-8bc0-4093415d080a" />
+<img width="279" height="402" alt="image" src="https://github.com/user-attachments/assets/fdc77293-3b34-4b0d-99d0-aca6b649a569" />
+
+<img width="281" height="404" alt="image" src="https://github.com/user-attachments/assets/03e002bc-bfb8-47fc-a208-3f25832bb3e4" />
+
+<img width="280" height="208" alt="image" src="https://github.com/user-attachments/assets/c95ea24a-13e6-449e-b294-48d58eb53831" />
+
+<img width="281" height="236" alt="image" src="https://github.com/user-attachments/assets/df525c37-de0d-4247-826b-2783c79ed1be" />
+
 
 ## Features
 
