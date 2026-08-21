@@ -8,7 +8,9 @@ peak usage, and tells you when your render finishes.
 
 No Python dependencies. No custom nodes. Frontend only.
 
-<!-- Add a screenshot here: drag an image into the GitHub issue/README editor -->
+<img width="210" height="188" alt="Screenshot 2026-08-21 170800" src="https://github.com/user-attachments/assets/9ec04f92-45a6-47d5-9e28-0f4d958eca5b" />
+
+<img width="212" height="373" alt="image" src="https://github.com/user-attachments/assets/d4debbde-d621-4065-8bc0-4093415d080a" />
 
 ## Features
 
