@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-amdmonitor"
 description = "VRAM monitor and run notifications for AMD / ROCm GPUs in ComfyUI, where NVML-based monitors show nothing."
-version = "1.0.0"
+version = "1.0.1"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.9"
@@ -11,6 +11,6 @@ dependencies = []
 Repository = "https://github.com/themacroman/ComfyUI-AMDMonitor"
 
 [tool.comfy]
-PublisherId = "themacroman"
+PublisherId = "the-macroman"
 DisplayName = "AMD Monitor"
-Icon = ""
+Icon = "https://raw.githubusercontent.com/themacroman/ComfyUI-AMDMonitor/main/icon.png"
