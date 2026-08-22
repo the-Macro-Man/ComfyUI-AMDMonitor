@@ -225,15 +225,13 @@ app.registerExtension({
       .amdm-node { font-size:10px; opacity:.7; white-space:nowrap; overflow:hidden;
                    text-overflow:ellipsis; }
       .amdm-run { color:#52c41a; }
-      .amdm-cfg { display:none; margin-top:6px; padding-top:6px; border-top:1px solid #3f3f46;
-                  max-height:60vh; overflow-y:auto; }
-      .amdm-cfg.amdm-open { display:block; }
-      .amdm-cfg h4 { margin:6px 0 2px; font-size:9.5px; text-transform:uppercase;
+      .amdm-grid { display:grid; gap:10px 24px;
+                   grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); }
+      .amdm-col h4 { margin:0 0 4px; font-size:9.5px; text-transform:uppercase;
                      letter-spacing:.06em; opacity:.45; font-weight:700; }
-      .amdm-cfg h4:first-child { margin-top:0; }
-      .amdm-cfg label { display:flex; align-items:center; gap:6px; padding:2px 0;
-                        cursor:pointer; font-size:10.5px; }
-      .amdm-cfg input[type=checkbox] { accent-color:#52c41a; cursor:pointer; margin:0; }
+      .amdm-col label { display:flex; align-items:center; gap:7px; padding:3px 0;
+                        cursor:pointer; font-size:11.5px; }
+      .amdm-col input[type=checkbox] { accent-color:#52c41a; cursor:pointer; margin:0; }
       .amdm-btns { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
       .amdm-btns button { all:unset; cursor:pointer; font-size:10px; padding:3px 7px;
         border:1px solid #52525b; border-radius:4px; opacity:.85; }
@@ -320,23 +318,12 @@ app.registerExtension({
       <div class="amdm-conn" style="display:none"></div>
       <div class="amdm-lastalert" style="display:none"><span></span><button
         title="Dismiss">&times;</button></div>
-      <div class="amdm-body">connecting&hellip;</div>
-      <div class="amdm-cfg">
-        ${SECTIONS.map(([n, items]) => `<h4>${esc(n)}</h4>` + items.map(([k, l]) =>
-          `<label><input type="checkbox" data-k="${k}"${cfg[k] ? " checked" : ""}>
-             ${esc(l)}</label>`).join("")).join("")}
-        <div class="amdm-btns">
-          <button class="amdm-reset">Reset Peak</button>
-          <button class="amdm-test">Test Alert</button>
-          <button class="amdm-defaults">Defaults</button>
-        </div>
-      </div>`;
+      <div class="amdm-body">connecting&hellip;</div>`;
     document.body.appendChild(box);
 
     const bodyEl = box.querySelector(".amdm-body");
     const connEl = box.querySelector(".amdm-conn");
     const alertEl = box.querySelector(".amdm-lastalert");
-    const cfgBox = box.querySelector(".amdm-cfg");
     const histBtn = box.querySelector(".amdm-history");
 
     const p = load(LS_POS, null);
@@ -531,17 +518,61 @@ app.registerExtension({
       };
     }
 
+    /* ── settings modal ───────────────────────────────────────────────── */
+
+    /*
+     * Settings open in a modal rather than expanding the panel. Nineteen
+     * toggles in a single column made the panel taller than the screen, so the
+     * sections are laid out in an auto-fitting grid instead.
+     */
+    function showSettings() {
+      document.getElementById("amdm-modal")?.remove();
+      const m = document.createElement("div");
+      m.id = "amdm-modal";
+      m.innerHTML = `
+        <div class="amdm-card">
+          <h3>AMD Monitor settings</h3>
+          <div class="amdm-grid">
+            ${SECTIONS.map(([n, items]) => `<div class="amdm-col">
+                <h4>${esc(n)}</h4>
+                ${items.map(([k, l]) => `<label><input type="checkbox" data-k="${k}"${
+                  cfg[k] ? " checked" : ""}> ${esc(l)}</label>`).join("")}
+              </div>`).join("")}
+          </div>
+          <div class="amdm-btns">
+            <button class="amdm-reset">Reset Peak</button>
+            <button class="amdm-test">Test Alert</button>
+            <button class="amdm-defaults">Defaults</button>
+            <button class="amdm-close">Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+      m.onclick = (e) => { if (e.target === m) m.remove(); };
+      m.querySelector(".amdm-close").onclick = () => m.remove();
+      m.querySelectorAll("input[type=checkbox]").forEach((el) => {
+        el.onchange = () => { cfg[el.dataset.k] = el.checked; saveCfg(); render(); };
+      });
+      m.querySelector(".amdm-reset").onclick = () => {
+        peak = {}; peakRam = 0; spark = []; toast("Peak and graph reset");
+      };
+      m.querySelector(".amdm-test").onclick = () =>
+        pushAlert("Test alert", "This is what a critical warning looks like. It stays "
+          + "until you dismiss it, and survives a restart.");
+      m.querySelector(".amdm-defaults").onclick = () => {
+        cfg = { ...DEFAULTS }; saveCfg();
+        box.style.width = cfg.width + "px";
+        render(); showSettings(); toast("Settings reset to defaults");
+      };
+    }
+
     histBtn.onclick = () => showHistory("runs");
     box.querySelector(".amdm-fold").onclick = () => box.classList.toggle("amdm-min");
     box.querySelector(".amdm-gear").onclick = () => {
-      cfgBox.classList.toggle("amdm-open");
+      showSettings();
       if ("Notification" in window && Notification.permission === "default") {
-        Notification.requestPermission();
+        Notification.requestPermission();   // only allowed from a user gesture
       }
     };
-    cfgBox.querySelectorAll("input[type=checkbox]").forEach((el) => {
-      el.onchange = () => { cfg[el.dataset.k] = el.checked; saveCfg(); render(); };
-    });
 
     /* ── state ────────────────────────────────────────────────────────── */
 
@@ -551,19 +582,6 @@ app.registerExtension({
     let progress = null, curNode = null, queue = 0;
     let nodeNames = {}, meta = null, outputs = [], runErr = "", logFile = "";
     let conn = "ok", fails = 0;
-
-    box.querySelector(".amdm-reset").onclick = () => {
-      peak = {}; peakRam = 0; spark = []; toast("Peak and graph reset");
-    };
-    box.querySelector(".amdm-test").onclick = () =>
-      pushAlert("Test alert", "This is what a critical warning looks like. It stays "
-        + "until you dismiss it, and survives a restart.");
-    box.querySelector(".amdm-defaults").onclick = () => {
-      cfg = { ...DEFAULTS }; saveCfg();
-      cfgBox.querySelectorAll("input[type=checkbox]").forEach(
-        (el) => (el.checked = cfg[el.dataset.k]));
-      box.style.width = cfg.width + "px"; render(); toast("Settings reset to defaults");
-    };
 
     /* ── drag / resize ────────────────────────────────────────────────── */
 

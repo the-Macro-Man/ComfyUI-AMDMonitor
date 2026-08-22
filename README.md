@@ -157,7 +157,8 @@ toast and alert cards carry this extension's own icon.
 
 ## Toggles
 
-Click the **⚙ gear**. Every row is independently switchable.
+Click the **⚙ gear** — settings open in their own window, laid out in columns so the
+panel stays compact. Every row is independently switchable.
 
 | Group | Toggles |
 |---|---|
