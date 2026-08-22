@@ -2,48 +2,54 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
 /*
- * AMD VRAM + system monitor, with run progress and notifications.
+ * AMD VRAM + system monitor, run progress, and crash early-warning.
  *
  * VRAM comes from ComfyUI's own /system_stats, which reports correctly on ROCm
  * because it goes through PyTorch's HIP backend instead of NVML. Crystools
  * cannot do this because it calls pynvml directly, which is NVIDIA-only.
  *
- * Swap / CPU / disk / network come from this extension's own /amdmonitor/stats
- * (psutil). If that route is missing -- old install, psutil absent -- those rows
- * simply do not render. Nothing breaks.
+ * Swap / CPU / disk / network come from this extension's /amdmonitor/stats
+ * (psutil). If that route is missing those rows simply do not render.
  *
- * Every row and every alert has its own toggle, grouped in the gear panel.
+ * The partial-load watcher reads ComfyUI's own log ring buffer at
+ * /internal/logs/raw and warns the moment ComfyUI reports a model loading
+ * partially -- on a card without headroom that is followed by ROCm aborting the
+ * whole process with no traceback. It is the one warning you cannot get any
+ * other way, and it costs nothing but a fetch.
+ *
+ * Every row and every alert has its own toggle.
  */
 
 const GB = 1024 ** 3;
 const LS_POS = "amdmonitor.pos";
 const LS_CFG = "amdmonitor.cfg";
-const SPARK_N = 60;          // samples kept for the graph
-const HIST_N = 5;            // runs kept in history
+const LS_HIST = "amdmonitor.hist";
+const SPARK_N = 60;      // samples kept for the graph
+const HIST_N = 25;       // runs kept in the history modal
+const ICON = new URL("./icon.png", import.meta.url).href;
 
 const DEFAULTS = {
   pollMs: 2000,
+  logPollMs: 1000,       // faster while a run is active -- the buffer is small
   width: 216,
-  // display
   showGpus: true,
   showTorchSplit: true,
   showSpark: true,
+  showPeak: true,
   showRam: true,
   showSwap: true,
   showCpu: true,
   showDisk: true,
   showIo: false,
-  showPeak: true,
   showProgress: true,
   showNode: true,
   showQueue: true,
   showTimer: true,
-  showHistory: false,
-  // alerts
   notifyDone: true,
   notifyError: true,
   soundDone: true,
   warnVram: true,
+  warnPartial: true,
   warnAt: 92,
 };
 
@@ -52,6 +58,14 @@ try { Object.assign(cfg, JSON.parse(localStorage.getItem(LS_CFG) || "{}")); }
 catch (e) { /* corrupt value -- keep defaults */ }
 const saveCfg = () => {
   try { localStorage.setItem(LS_CFG, JSON.stringify(cfg)); } catch (e) {}
+};
+
+let history = [];
+try { history = JSON.parse(localStorage.getItem(LS_HIST) || "[]") || []; }
+catch (e) { history = []; }
+const saveHist = () => {
+  try { localStorage.setItem(LS_HIST, JSON.stringify(history.slice(0, HIST_N))); }
+  catch (e) {}
 };
 
 /* ── formatting ─────────────────────────────────────────────────────────── */
@@ -69,6 +83,8 @@ const rate = (bps) => {
 };
 const esc = (s) => String(s).replace(/[&<>"]/g,
   (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const stamp = (t) => new Date(t).toLocaleString([],
+  { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
 function colour(pct) {
   if (pct >= cfg.warnAt) return "#ff4d4f";
@@ -88,17 +104,35 @@ function bar(label, used, total, extra, forceCol) {
     </div>`;
 }
 
+/*
+ * Sparkline drawn inside a visible track, with a translucent area fill and
+ * guides at the amber and red thresholds. Without the track it reads as an
+ * empty gap whenever VRAM is low, because the line sits at the bottom -- the
+ * line's height IS the value, so it must not be recentred.
+ */
 function sparkline(samples, w) {
-  if (samples.length < 2) return "";
-  const h = 26, n = samples.length;
-  const pts = samples.map((v, i) =>
-    `${(i / (n - 1) * w).toFixed(1)},${(h - (v / 100) * h).toFixed(1)}`).join(" ");
-  const last = samples[samples.length - 1];
+  const h = 30;
+  const guide = (pct) => {
+    const y = (h - (pct / 100) * h).toFixed(1);
+    return `<line x1="0" y1="${y}" x2="${w}" y2="${y}" stroke="#52525b"
+              stroke-width="1" stroke-dasharray="2 3" vector-effect="non-scaling-stroke"/>`;
+  };
+  let inner = `<rect x="0" y="0" width="${w}" height="${h}" rx="3" fill="#2a2a2e"/>
+               ${guide(80)}${guide(cfg.warnAt)}`;
+
+  if (samples.length >= 2) {
+    const n = samples.length;
+    const xy = samples.map((v, i) =>
+      [(i / (n - 1)) * w, h - (Math.min(v, 100) / 100) * h]);
+    const line = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+    const area = `0,${h} ` + line + ` ${w},${h}`;
+    const c = colour(samples[samples.length - 1]);
+    inner += `<polygon points="${area}" fill="${c}" opacity="0.16"/>
+              <polyline points="${line}" fill="none" stroke="${c}" stroke-width="1.5"
+                vector-effect="non-scaling-stroke"/>`;
+  }
   return `<svg class="amdm-spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"
-            preserveAspectRatio="none">
-            <polyline points="${pts}" fill="none" stroke="${colour(last)}"
-              stroke-width="1.5" vector-effect="non-scaling-stroke"/>
-          </svg>`;
+            preserveAspectRatio="none">${inner}</svg>`;
 }
 
 /* ── notifications ──────────────────────────────────────────────────────── */
@@ -137,38 +171,30 @@ function toast(text, ok = true) {
 function notify(title, body, ok = true) {
   toast(title + (body ? " -- " + body : ""), ok);
   if ("Notification" in window && Notification.permission === "granted") {
-    try { new Notification(title, { body, tag: "amdmonitor" }); } catch (e) {}
+    try { new Notification(title, { body, tag: "amdmonitor", icon: ICON }); }
+    catch (e) {}
   }
 }
 
-/* ── settings panel layout ──────────────────────────────────────────────── */
+/* ── settings layout ────────────────────────────────────────────────────── */
 
 const SECTIONS = [
   ["Display", [
-    ["showGpus",       "GPU bars"],
-    ["showTorchSplit", "ComfyUI vs other VRAM"],
-    ["showSpark",      "VRAM graph"],
-    ["showPeak",       "Peak VRAM"],
-    ["showRam",        "System RAM"],
+    ["showGpus", "GPU bars"], ["showTorchSplit", "ComfyUI vs other VRAM"],
+    ["showSpark", "VRAM graph"], ["showPeak", "Peak VRAM"], ["showRam", "System RAM"],
   ]],
   ["System (needs psutil route)", [
-    ["showSwap",  "Swap"],
-    ["showCpu",   "CPU"],
-    ["showDisk",  "Output disk free"],
-    ["showIo",    "Disk / network rates"],
+    ["showSwap", "Swap"], ["showCpu", "CPU"],
+    ["showDisk", "Output disk free"], ["showIo", "Disk / network rates"],
   ]],
   ["Run", [
-    ["showProgress", "Progress + ETA"],
-    ["showNode",     "Current node"],
-    ["showQueue",    "Queue depth"],
-    ["showTimer",    "Run timer"],
-    ["showHistory",  "Recent runs"],
+    ["showProgress", "Progress + ETA"], ["showNode", "Current node"],
+    ["showQueue", "Queue depth"], ["showTimer", "Run timer"],
   ]],
   ["Alerts", [
-    ["notifyDone",  "Notify on finish"],
-    ["notifyError", "Notify on error"],
-    ["soundDone",   "Sound"],
-    ["warnVram",    "Warn at high VRAM"],
+    ["notifyDone", "Notify on finish"], ["notifyError", "Notify on error"],
+    ["soundDone", "Sound"], ["warnVram", "Warn at high VRAM"],
+    ["warnPartial", "Warn on partial model load"],
   ]],
 ];
 
@@ -184,6 +210,7 @@ app.registerExtension({
         color:#e6e6e6; background:rgba(24,24,27,.92); border:1px solid #3f3f46;
         border-radius:8px; backdrop-filter:blur(6px); user-select:none; }
       #amd-monitor.amdm-min .amdm-body, #amd-monitor.amdm-min .amdm-cfg { display:none; }
+      #amd-monitor.amdm-stale .amdm-body { opacity:.4; }
       .amdm-head { display:flex; align-items:center; gap:6px; font-weight:600;
                    margin-bottom:6px; cursor:move; }
       .amdm-head .amdm-title { flex:1; white-space:nowrap; overflow:hidden;
@@ -191,6 +218,9 @@ app.registerExtension({
       .amdm-head button { all:unset; cursor:pointer; opacity:.55; padding:0 2px;
                           font-size:12px; }
       .amdm-head button:hover { opacity:1; }
+      .amdm-conn { margin:-2px 0 6px; font-size:10px; padding:3px 6px; border-radius:4px; }
+      .amdm-conn.warn { color:#faad14; background:#faad1418; }
+      .amdm-conn.bad  { color:#ff4d4f; background:#ff4d4f18; }
       .amdm-row { margin-bottom:7px; }
       .amdm-label { display:flex; justify-content:space-between; gap:8px;
                     margin-bottom:3px; }
@@ -201,7 +231,7 @@ app.registerExtension({
       .amdm-fill { height:100%; border-radius:3px; transition:width .3s, background .3s; }
       .amdm-sub { margin-top:2px; font-size:10px; opacity:.55;
                   font-variant-numeric:tabular-nums; }
-      .amdm-spark { display:block; margin:1px 0 4px; }
+      .amdm-spark { display:block; margin:1px 0 6px; }
       .amdm-warn { color:#ff4d4f; font-weight:600; opacity:1; }
       .amdm-sec { margin-top:5px; padding-top:5px; border-top:1px solid #3f3f46; }
       .amdm-kv { display:flex; justify-content:space-between; gap:8px; font-size:10.5px;
@@ -232,6 +262,19 @@ app.registerExtension({
         border-radius:6px; opacity:0; transform:translateY(8px);
         transition:opacity .25s, transform .25s; pointer-events:none; }
       #amdm-toast.amdm-show { opacity:1; transform:translateY(0); }
+      #amdm-modal { position:fixed; inset:0; z-index:1400; display:flex;
+        align-items:center; justify-content:center; background:rgba(0,0,0,.55); }
+      #amdm-modal .amdm-card { width:min(560px,92vw); max-height:80vh; overflow:auto;
+        background:#18181b; border:1px solid #3f3f46; border-radius:10px; padding:16px 18px;
+        font:12px/1.45 "Segoe UI",sans-serif; color:#e6e6e6; }
+      #amdm-modal h3 { margin:0 0 10px; font-size:14px; display:flex;
+                       justify-content:space-between; align-items:center; }
+      #amdm-modal table { width:100%; border-collapse:collapse;
+                          font-variant-numeric:tabular-nums; }
+      #amdm-modal th { text-align:left; font-size:10px; text-transform:uppercase;
+        letter-spacing:.05em; opacity:.5; padding:4px 6px; border-bottom:1px solid #3f3f46; }
+      #amdm-modal td { padding:4px 6px; border-bottom:1px solid #27272a; font-size:11.5px; }
+      #amdm-modal tr.bad td { color:#ff4d4f; }
     `;
     document.head.appendChild(css);
 
@@ -241,23 +284,26 @@ app.registerExtension({
       <div class="amdm-grip" title="drag to resize"></div>
       <div class="amdm-head">
         <span class="amdm-title">GPU / System</span>
-        <button class="amdm-gear" title="settings">&#9881;</button>
-        <button class="amdm-fold" title="collapse">&#9662;</button>
+        <button class="amdm-gear" title="Settings">&#9881;</button>
+        <button class="amdm-fold" title="Collapse">&#9662;</button>
       </div>
+      <div class="amdm-conn" style="display:none"></div>
       <div class="amdm-body">connecting&hellip;</div>
       <div class="amdm-cfg">
         ${SECTIONS.map(([name, items]) => `<h4>${esc(name)}</h4>` + items.map(
             ([k, label]) => `<label><input type="checkbox" data-k="${k}"${
               cfg[k] ? " checked" : ""}> ${esc(label)}</label>`).join("")).join("")}
         <div class="amdm-btns">
-          <button class="amdm-reset">reset peak</button>
-          <button class="amdm-test">test alert</button>
-          <button class="amdm-defaults">defaults</button>
+          <button class="amdm-history">History</button>
+          <button class="amdm-reset">Reset Peak</button>
+          <button class="amdm-test">Test Alert</button>
+          <button class="amdm-defaults">Defaults</button>
         </div>
       </div>`;
     document.body.appendChild(box);
 
     const bodyEl = box.querySelector(".amdm-body");
+    const connEl = box.querySelector(".amdm-conn");
     const cfgBox = box.querySelector(".amdm-cfg");
 
     try {
@@ -270,9 +316,8 @@ app.registerExtension({
     box.querySelector(".amdm-fold").onclick = () => box.classList.toggle("amdm-min");
     box.querySelector(".amdm-gear").onclick = () => {
       cfgBox.classList.toggle("amdm-open");
-      // Permission can only be requested from a user gesture.
       if ("Notification" in window && Notification.permission === "default") {
-        Notification.requestPermission();
+        Notification.requestPermission();   // only allowed from a user gesture
       }
     };
     cfgBox.querySelectorAll("input[type=checkbox]").forEach((el) => {
@@ -281,11 +326,63 @@ app.registerExtension({
 
     /* ── state ────────────────────────────────────────────────────────── */
 
-    let peak = {}, spark = [], history = [];
+    let peak = {}, spark = [];
     let sys = null, extra = null;
     let running = false, runStart = null, lastRun = null, warned = false;
     let progress = null, curNode = null, queue = 0;
+    let nodeNames = {};          // node id -> readable label, from /queue
+    let conn = "ok", fails = 0;
 
+    /* ── history modal ────────────────────────────────────────────────── */
+
+    function showHistory() {
+      const old = document.getElementById("amdm-modal");
+      if (old) old.remove();
+      const m = document.createElement("div");
+      m.id = "amdm-modal";
+      const rows = history.length ? history.map((h) => `
+        <tr class="${h.ok ? "" : "bad"}">
+          <td>${esc(stamp(h.at))}</td>
+          <td>${dur(h.dur)}</td>
+          <td>${h.peak ? fmtGB(h.peak) + " GB" : "&mdash;"}</td>
+          <td>${h.ok ? "ok" : "failed"}</td>
+        </tr>`).join("")
+        : `<tr><td colspan="4" style="opacity:.5;padding:14px 6px">
+             No runs recorded yet.</td></tr>`;
+      m.innerHTML = `
+        <div class="amdm-card">
+          <h3>Run history <span style="font-size:11px;opacity:.5">
+            last ${HIST_N}</span></h3>
+          <table>
+            <thead><tr><th>When</th><th>Duration</th><th>Peak VRAM</th><th>Result</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="amdm-btns">
+            <button class="amdm-csv">Export CSV</button>
+            <button class="amdm-clear">Clear</button>
+            <button class="amdm-close">Close</button>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+      m.onclick = (e) => { if (e.target === m) m.remove(); };
+      m.querySelector(".amdm-close").onclick = () => m.remove();
+      m.querySelector(".amdm-clear").onclick = () => {
+        history = []; saveHist(); m.remove(); toast("History cleared");
+      };
+      m.querySelector(".amdm-csv").onclick = () => {
+        const csv = "when,duration_seconds,peak_vram_bytes,result\n" +
+          history.map((h) => [new Date(h.at).toISOString(),
+            Math.round(h.dur / 1000), h.peak || 0, h.ok ? "ok" : "failed"].join(",")
+          ).join("\n");
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+        a.download = "amdmonitor_runs.csv";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      };
+    }
+
+    box.querySelector(".amdm-history").onclick = showHistory;
     box.querySelector(".amdm-reset").onclick = () => {
       peak = {}; spark = []; toast("Peak and graph reset");
     };
@@ -297,36 +394,29 @@ app.registerExtension({
       cfgBox.querySelectorAll("input[type=checkbox]").forEach(
         (el) => (el.checked = cfg[el.dataset.k]));
       box.style.width = cfg.width + "px";
-      render();
-      toast("Settings reset to defaults");
+      render(); toast("Settings reset to defaults");
     };
 
-    /* ── drag to move, grip to resize ─────────────────────────────────── */
+    /* ── drag / resize ────────────────────────────────────────────────── */
 
-    let mx = 0, my = 0, moving = false;
+    let mx = 0, my = 0, moving = false, rx = 0, rw = 0, sizing = false;
     box.querySelector(".amdm-head").addEventListener("mousedown", (e) => {
       if (e.target.tagName === "BUTTON") return;
       moving = true; mx = e.clientX - box.offsetLeft; my = e.clientY - box.offsetTop;
       e.preventDefault();
     });
-
-    let rx = 0, rw = 0, sizing = false;
     box.querySelector(".amdm-grip").addEventListener("mousedown", (e) => {
       sizing = true; rx = e.clientX; rw = box.offsetWidth;
       e.preventDefault(); e.stopPropagation();
     });
-
     window.addEventListener("mousemove", (e) => {
       if (moving) {
         box.style.left = (e.clientX - mx) + "px";
         box.style.top = (e.clientY - my) + "px";
         box.style.right = "auto";
       } else if (sizing) {
-        // grip is on the right edge, so dragging right widens
         const w = Math.max(180, Math.min(520, rw + (e.clientX - rx)));
-        box.style.width = w + "px";
-        cfg.width = w;
-        render();
+        box.style.width = w + "px"; cfg.width = w; render();
       }
     });
     window.addEventListener("mouseup", () => {
@@ -340,20 +430,102 @@ app.registerExtension({
       if (sizing) { sizing = false; saveCfg(); }
     });
 
-    /* ── run tracking ─────────────────────────────────────────────────── */
+    /* ── node names ───────────────────────────────────────────────────── */
+
+    /*
+     * Read the running prompt from /queue and map node id -> class_type. The
+     * graph lookup app.graph.getNodeById() is unreliable: it changes between
+     * frontend versions, and subgraph ids look like "405:364" so Number() gives
+     * NaN. The queue payload comes from the prompt actually being executed, so
+     * it survives both.
+     */
+    async function loadNodeNames() {
+      try {
+        const r = await api.fetchApi("/queue");
+        const q = await r.json();
+        const running = (q.queue_running || [])[0];
+        const promptDict = running && running[2];
+        if (!promptDict) return;
+        const map = {};
+        for (const [id, n] of Object.entries(promptDict)) {
+          map[id] = (n && n._meta && n._meta.title) || (n && n.class_type) || `node ${id}`;
+        }
+        nodeNames = map;
+      } catch (e) { /* fall back to the graph, then to the raw id */ }
+    }
 
     const nodeLabel = (id) => {
+      if (id == null) return null;
+      const key = String(id);
+      if (nodeNames[key]) return nodeNames[key];
       try {
         const n = app.graph?.getNodeById?.(Number(id));
-        if (n) return n.title || n.type || `node ${id}`;
+        if (n) return n.title || n.type || `node ${key}`;
       } catch (e) {}
-      return id != null ? `node ${id}` : null;
+      return `node ${key}`;
     };
+
+    /* ── partial-load watcher ─────────────────────────────────────────── */
+
+    /*
+     * ComfyUI's log ring buffer, read over HTTP. Entries are write FRAGMENTS,
+     * not lines -- "** Platform:", " ", "Windows", "\n" arrive separately -- so
+     * the fragments must be concatenated and split on newlines before matching.
+     * Messages also carry ANSI colour codes, which are stripped.
+     */
+    let logSince = null, logCarry = "", logSeen = new Set(), logDead = false;
+
+    const ANSI = /\[[0-9;]*m/g;
+    const PATTERNS = [
+      [/loaded partially/i,
+       "Model loaded PARTIALLY -- weights are being offloaded. On ROCm this is " +
+       "usually followed by a hard abort. Use a smaller model."],
+      [/out of memory/i, "Out of memory reported in the ComfyUI log."],
+    ];
+
+    async function pollLog() {
+      if (logDead || !cfg.warnPartial) return;
+      try {
+        const r = await api.fetchApi("/internal/logs/raw");
+        if (!r.ok) { logDead = true; return; }
+        const d = await r.json();
+        const entries = d.entries || [];
+        let text = "";
+        for (const e of entries) {
+          if (logSince && e.t <= logSince) continue;
+          text += e.m || "";
+        }
+        if (entries.length) logSince = entries[entries.length - 1].t;
+
+        logCarry += text.replace(ANSI, "");
+        const lines = logCarry.split("\n");
+        logCarry = lines.pop() || "";        // keep the incomplete tail
+
+        for (const line of lines) {
+          for (const [re, msg] of PATTERNS) {
+            if (!re.test(line)) continue;
+            const key = line.trim().slice(0, 120);
+            if (logSeen.has(key)) continue;   // the buffer repeats on every poll
+            logSeen.add(key);
+            if (logSeen.size > 200) logSeen = new Set();
+            notify("VRAM WARNING", msg, false);
+            beep(false);
+          }
+        }
+      } catch (e) {
+        logDead = true;
+        console.warn("[AMDMonitor] /internal/logs/raw unavailable -- " +
+                     "partial-load warning disabled");
+      }
+    }
+
+    /* ── run tracking ─────────────────────────────────────────────────── */
 
     const onStart = () => {
       if (running) return;
       running = true; runStart = Date.now(); warned = false;
       peak = {}; spark = []; progress = null; curNode = null;
+      loadNodeNames();
     };
 
     const onEnd = (ok, msg) => {
@@ -362,8 +534,9 @@ app.registerExtension({
       lastRun = Date.now() - runStart;
       progress = null; curNode = null;
       const pk = Object.values(peak).length ? Math.max(...Object.values(peak)) : 0;
-      history.unshift({ dur: lastRun, peak: pk, ok, at: Date.now() });
+      history.unshift({ at: Date.now(), dur: lastRun, peak: pk, ok });
       history = history.slice(0, HIST_N);
+      saveHist();
       const pkTxt = pk ? `peak VRAM ${fmtGB(pk)} GB` : "";
       if (ok && cfg.notifyDone) {
         notify("Render finished", `${dur(lastRun)}${pkTxt ? " -- " + pkTxt : ""}`, true);
@@ -384,8 +557,8 @@ app.registerExtension({
     });
     api.addEventListener("executing", (e) => {
       const n = e?.detail?.node ?? e?.detail;
+      if (n != null) { onStart(); if (!nodeNames[String(n)]) loadNodeNames(); }
       curNode = (n === null || n === undefined) ? null : nodeLabel(n);
-      if (n != null) onStart();
     });
     api.addEventListener("progress", (e) => {
       const d = e?.detail || {};
@@ -397,12 +570,27 @@ app.registerExtension({
       queue = e?.detail?.exec_info?.queue_remaining ?? 0;
       if (queue === 0 && running) onEnd(true);   // fallback for older builds
     });
+    // ComfyUI's own socket state is more accurate than inferring from a failed fetch
+    api.addEventListener("reconnecting", () => setConn("reconnecting"));
+    api.addEventListener("reconnected", () => { fails = 0; setConn("ok"); });
+
+    function setConn(state) {
+      if (conn === state) return;
+      conn = state;
+      box.classList.toggle("amdm-stale", state !== "ok");
+      if (state === "ok") { connEl.style.display = "none"; return; }
+      connEl.style.display = "";
+      connEl.className = "amdm-conn " + (state === "down" ? "bad" : "warn");
+      connEl.textContent = state === "down"
+        ? "ComfyUI backend not responding"
+        : "Reconnecting…";
+    }
 
     /* ── render ───────────────────────────────────────────────────────── */
 
     function render() {
       if (!sys) return;
-      const innerW = box.clientWidth - 20;   // minus padding, for the sparkline
+      const innerW = Math.max(box.clientWidth - 20, 40);
       let html = "";
 
       if (cfg.showGpus) {
@@ -429,22 +617,19 @@ app.registerExtension({
             }
           }
           if (cfg.showTorchSplit && d.torch_vram_total != null) {
-            // What ComfyUI's allocator holds, versus everything else on the card.
             const torchUsed = Math.max((d.torch_vram_total || 0) -
                                        (d.torch_vram_free || 0), 0);
-            const other = Math.max(used - torchUsed, 0);
-            bits.push(`ComfyUI ${fmtGB(torchUsed)} &middot; other ${fmtGB(other)}`);
+            bits.push(`ComfyUI ${fmtGB(torchUsed)} &middot; other ${
+              fmtGB(Math.max(used - torchUsed, 0))}`);
           }
           html += bar(name, used, total, bits.join(" &middot; "));
         }
 
-        // graph follows the first device with VRAM
         const first = (sys.devices || []).find((d) => (d.vram_total || 0) > 0);
         if (cfg.showSpark && first) {
-          const pct = ((first.vram_total - first.vram_free) / first.vram_total) * 100;
-          spark.push(pct);
+          spark.push(((first.vram_total - first.vram_free) / first.vram_total) * 100);
           if (spark.length > SPARK_N) spark.shift();
-          html += sparkline(spark, Math.max(innerW, 40));
+          html += sparkline(spark, innerW);
         }
       }
 
@@ -455,7 +640,6 @@ app.registerExtension({
 
       if (extra?.available) {
         if (cfg.showSwap && extra.swap_total) {
-          // Swap in use means memory has spilled to disk -- everything gets slow.
           html += bar("Swap", extra.swap_used, extra.swap_total, "",
                       extra.swap_used / extra.swap_total > 0.5 ? "#faad14" : "#52c41a");
         }
@@ -470,9 +654,8 @@ app.registerExtension({
             </div>`;
         }
         if (cfg.showDisk && extra.disk_total) {
-          const usedD = extra.disk_total - extra.disk_free;
-          html += bar("Output disk", usedD, extra.disk_total,
-                      `${fmtGB(extra.disk_free)} GB free`);
+          html += bar("Output disk", extra.disk_total - extra.disk_free,
+                      extra.disk_total, `${fmtGB(extra.disk_free)} GB free`);
         }
         if (cfg.showIo && (extra.disk_read_bps != null || extra.net_recv_bps != null)) {
           html += `<div class="amdm-sec">
@@ -484,9 +667,7 @@ app.registerExtension({
         }
       }
 
-      // ── run section ──────────────────────────────────────────────────
       const runBits = [];
-
       if (cfg.showProgress && running && progress) {
         const p = (progress.value / progress.max) * 100;
         const el = Date.now() - runStart;
@@ -509,13 +690,6 @@ app.registerExtension({
               running && runStart ? "running " + dur(Date.now() - runStart) : "idle"}</span>
             <span>${lastRun ? "last " + dur(lastRun) : ""}</span></div>`);
       }
-      if (cfg.showHistory && history.length) {
-        runBits.push(history.map((h) =>
-          `<div class="amdm-kv"><span>${h.ok ? "" : "&#10007; "}${
-            new Date(h.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-          }</span><span>${dur(h.dur)}${h.peak ? " &middot; " + fmtGB(h.peak) + " GB" : ""
-          }</span></div>`).join(""));
-      }
       if (runBits.length) html += `<div class="amdm-sec">${runBits.join("")}</div>`;
 
       bodyEl.innerHTML = html || "nothing selected";
@@ -526,13 +700,22 @@ app.registerExtension({
     let routeMissing = false;
 
     async function tick() {
+      let ok = true;
       try {
         const r = await api.fetchApi("/system_stats");
         sys = await r.json();
-      } catch (e) {
-        bodyEl.innerHTML = `<span class="amdm-warn">/system_stats unreachable</span>`;
+      } catch (e) { ok = false; }
+
+      if (!ok) {
+        // A ComfyUI restart is routine, not a fault. Keep the last values on
+        // screen (dimmed) and only escalate after several failed polls.
+        fails++;
+        setConn(fails >= 5 ? "down" : "reconnecting");
         return;
       }
+      fails = 0;
+      if (conn !== "ok") setConn("ok");
+
       if (!routeMissing) {
         try {
           const r2 = await api.fetchApi("/amdmonitor/stats");
@@ -549,6 +732,10 @@ app.registerExtension({
 
     tick();
     setInterval(tick, cfg.pollMs);
-    console.log("[AMDMonitor] ready -- polling every " + cfg.pollMs + "ms");
+    // Poll the log faster while a run is active: the ring buffer is only ~300
+    // entries and a model-loading burst can push the line out between polls.
+    setInterval(() => { if (running || !logDead) pollLog(); }, cfg.logPollMs);
+    console.log("[AMDMonitor] ready -- stats " + cfg.pollMs + "ms, log " +
+                cfg.logPollMs + "ms");
   },
 });

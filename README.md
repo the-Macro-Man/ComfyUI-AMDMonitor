@@ -44,11 +44,14 @@ No Python dependencies. No custom nodes. Frontend only.
 **Run**
 
 - **Progress + ETA** — step *k of n* with a live estimate of time remaining
-- **Current node** — which part of the graph is executing right now
-- **Queue depth**, **run timer**, and **recent run history** with durations and peaks
+- **Current node** — the executing node's real name, read from the running prompt
+- **Queue depth** and **run timer**
+- **Run history** — a modal with the last 25 runs, persisted across restarts, CSV export
 
 **Alerts**
 
+- **Partial-load warning** — watches ComfyUI's own log and warns the instant a model
+  loads partially, which on ROCm is the last thing you see before the process aborts
 - **Finish notifications** — toast, desktop notification and chime with duration and peak
 - **Failure alerts** — distinct tone plus the error message
 - **Offload warning** — fires mid-run when a GPU crosses the danger threshold
@@ -138,11 +141,11 @@ Click the **⚙ gear**. Every row is independently switchable.
 |---|---|
 | **Display** | GPU bars · ComfyUI vs other VRAM · VRAM graph · Peak VRAM · System RAM |
 | **System** | Swap · CPU · Output disk free · Disk / network rates |
-| **Run** | Progress + ETA · Current node · Queue depth · Run timer · Recent runs |
-| **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM |
+| **Run** | Progress + ETA · Current node · Queue depth · Run timer |
+| **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load |
 
-Three buttons: **reset peak** clears the high-water mark and graph, **test alert** fires a
-sample notification, **defaults** restores everything.
+Four buttons: **History** opens the run log, **Reset Peak** clears the high-water mark and
+graph, **Test Alert** fires a sample notification, **Defaults** restores everything.
 
 Settings, panel position and width all persist in `localStorage`.
 
@@ -150,8 +153,10 @@ Settings, panel position and width all persist in `localStorage`.
 
 | Source | Provides | If unavailable |
 |---|---|---|
-| ComfyUI `/system_stats` | VRAM per device, system RAM | panel shows an error |
-| ComfyUI websocket events | progress, current node, queue, run start/end | those rows stay empty |
+| ComfyUI `/system_stats` | VRAM per device, system RAM | shows `Reconnecting…`, keeps last values |
+| ComfyUI websocket events | progress, queue, run start/end | those rows stay empty |
+| ComfyUI `/queue` | the executing node's real name | falls back to `node 237` |
+| ComfyUI `/internal/logs/raw` | partial-load detection | the warning is silently disabled |
 | `/amdmonitor/stats` (this extension, psutil) | swap, CPU, disk, network | System rows are hidden automatically |
 
 The psutil route is read-only. It writes nothing and executes nothing. If psutil is
