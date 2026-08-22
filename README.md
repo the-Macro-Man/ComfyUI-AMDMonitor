@@ -46,14 +46,16 @@ No Python dependencies. No custom nodes. Frontend only.
 - **Progress + ETA** — step *k of n* with a live estimate of time remaining
 - **Current node** — the executing node's real name, read from the running prompt
 - **Queue depth** and **run timer**
-- **Run history** — a modal with the last 25 runs, persisted across restarts, CSV export
+- **Run history** — model, LoRAs, size, sampler, steps, seed, outputs, errors and peak
+  usage for every run. Expandable rows, CSV export, and written to disk as well
 
 **Alerts**
 
 - **Partial-load warning** — watches ComfyUI's own log and warns the instant a model
   loads partially, which on ROCm is the last thing you see before the process aborts
+- **Alerts survive the crash** — critical warnings stay until dismissed, are written to
+  disk, and are shown again when you restart
 - **Finish notifications** — toast, desktop notification and chime with duration and peak
-- **Failure alerts** — distinct tone plus the error message
 - **Offload warning** — fires mid-run when a GPU crosses the danger threshold
 
 **Interface**
@@ -139,13 +141,20 @@ Click the **⚙ gear**. Every row is independently switchable.
 
 | Group | Toggles |
 |---|---|
-| **Display** | GPU bars · ComfyUI vs other VRAM · VRAM graph · Peak VRAM · System RAM |
+| **Display** | GPU bars · Hide integrated GPU · VRAM graph · Peak VRAM · System RAM |
 | **System** | Swap · CPU · Output disk free · Disk / network rates |
-| **Run** | Progress + ETA · Current node · Queue depth · Run timer |
+| **Run** | Progress + ETA · Current node · Queue depth · Run timer · Save runs and logs to disk |
 | **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load |
 
-Four buttons: **History** opens the run log, **Reset Peak** clears the high-water mark and
-graph, **Test Alert** fires a sample notification, **Defaults** restores everything.
+**H** in the header opens run history and alerts. It turns red when there is an unread
+alert. In the gear panel: **Reset Peak** clears the high-water mark and graph,
+**Test Alert** fires a sample critical warning, **Defaults** restores everything.
+
+### Why integrated GPUs are hidden by default
+
+An iGPU's "VRAM" is carved out of system RAM, so it reads 100% red whenever system RAM
+fills — even though ComfyUI never touched it. It looks like the cause of a crash when it
+is only a symptom. Untick **Hide integrated GPU** if you want the row back.
 
 Settings, panel position and width all persist in `localStorage`.
 
@@ -159,9 +168,28 @@ Settings, panel position and width all persist in `localStorage`.
 | ComfyUI `/internal/logs/raw` | partial-load detection | the warning is silently disabled |
 | `/amdmonitor/stats` (this extension, psutil) | swap, CPU, disk, network | System rows are hidden automatically |
 
-The psutil route is read-only. It writes nothing and executes nothing. If psutil is
-missing the route still answers, reporting `available: false`, and the frontend simply
-hides those rows.
+If psutil is missing the route still answers, reporting `available: false`, and the
+frontend simply hides those rows. Nothing is ever executed.
+
+## Where it saves things
+
+Run records and per-run logs are written to **`ComfyUI/user/amdmonitor/`** — never the
+extension folder, which ComfyUI Manager replaces on update.
+
+```
+user/amdmonitor/
+  runs.csv                                one row per run
+  runs/2026-08-22_1147_<promptid>.json    full record
+  runs/2026-08-22_1147_<promptid>.log     ComfyUI's log for that run
+  alerts.log
+```
+
+The log is **appended as the run progresses, flushed every line**. That is the whole
+point: when ROCm aborts there is no clean shutdown, so anything buffered is lost. Writing
+as we go leaves a file ending at the exact moment things went wrong.
+
+The last 50 runs are kept; older ones are pruned. Turn the whole thing off with the
+**Save runs and logs to disk** toggle, and history still works in the browser.
 
 ## Configuration
 
