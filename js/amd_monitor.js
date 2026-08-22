@@ -154,14 +154,22 @@ function beep(ok = true) {
   } catch (e) { /* autoplay blocked until the page is interacted with */ }
 }
 
-let toastEl = null;
+/*
+ * The in-page toast carries our icon. Windows native toasts cannot: they use
+ * the host application's icon and identity (hence "electron.app.Comfy Desktop"),
+ * and ignore the Notification API's icon option. The option is still passed
+ * below because other platforms do honour it.
+ */
+let toastEl = null, toastMsg = null;
 function toast(text, ok = true) {
   if (!toastEl) {
     toastEl = document.createElement("div");
     toastEl.id = "amdm-toast";
+    toastEl.innerHTML = `<img src="${ICON}" alt=""><span></span>`;
     document.body.appendChild(toastEl);
+    toastMsg = toastEl.querySelector("span");
   }
-  toastEl.textContent = text;
+  toastMsg.textContent = text;
   toastEl.style.borderLeftColor = ok ? "#52c41a" : "#ff4d4f";
   toastEl.classList.add("amdm-show");
   clearTimeout(toastEl._t);
@@ -216,8 +224,10 @@ app.registerExtension({
       .amdm-head .amdm-title { flex:1; white-space:nowrap; overflow:hidden;
                                text-overflow:ellipsis; }
       .amdm-head button { all:unset; cursor:pointer; opacity:.55; padding:0 2px;
-                          font-size:12px; }
+                          font-size:12px; line-height:1; }
       .amdm-head button:hover { opacity:1; }
+      .amdm-head .amdm-history { font-size:10px; font-weight:700; letter-spacing:.02em;
+        border:1px solid #52525b !important; border-radius:3px; padding:1px 4px !important; }
       .amdm-conn { margin:-2px 0 6px; font-size:10px; padding:3px 6px; border-radius:4px; }
       .amdm-conn.warn { color:#faad14; background:#faad1418; }
       .amdm-conn.bad  { color:#ff4d4f; background:#ff4d4f18; }
@@ -257,10 +267,12 @@ app.registerExtension({
                    cursor:ew-resize; }
       .amdm-grip:hover { background:linear-gradient(90deg,transparent,#52c41a44); }
       #amdm-toast { position:fixed; bottom:16px; right:16px; z-index:1300;
-        max-width:300px; padding:9px 13px; font:12px/1.4 "Segoe UI",sans-serif;
+        max-width:320px; padding:9px 13px; font:12px/1.4 "Segoe UI",sans-serif;
         color:#e6e6e6; background:rgba(24,24,27,.96); border-left:3px solid #52c41a;
         border-radius:6px; opacity:0; transform:translateY(8px);
-        transition:opacity .25s, transform .25s; pointer-events:none; }
+        transition:opacity .25s, transform .25s; pointer-events:none;
+        display:flex; align-items:center; gap:10px; }
+      #amdm-toast img { width:26px; height:26px; flex:0 0 26px; border-radius:5px; }
       #amdm-toast.amdm-show { opacity:1; transform:translateY(0); }
       #amdm-modal { position:fixed; inset:0; z-index:1400; display:flex;
         align-items:center; justify-content:center; background:rgba(0,0,0,.55); }
@@ -284,6 +296,7 @@ app.registerExtension({
       <div class="amdm-grip" title="drag to resize"></div>
       <div class="amdm-head">
         <span class="amdm-title">GPU / System</span>
+        <button class="amdm-history" title="Run history">H</button>
         <button class="amdm-gear" title="Settings">&#9881;</button>
         <button class="amdm-fold" title="Collapse">&#9662;</button>
       </div>
@@ -294,7 +307,6 @@ app.registerExtension({
             ([k, label]) => `<label><input type="checkbox" data-k="${k}"${
               cfg[k] ? " checked" : ""}> ${esc(label)}</label>`).join("")).join("")}
         <div class="amdm-btns">
-          <button class="amdm-history">History</button>
           <button class="amdm-reset">Reset Peak</button>
           <button class="amdm-test">Test Alert</button>
           <button class="amdm-defaults">Defaults</button>
