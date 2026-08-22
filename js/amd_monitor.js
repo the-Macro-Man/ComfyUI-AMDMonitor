@@ -739,6 +739,18 @@ app.registerExtension({
         }).catch(() => {});
       }
 
+      if (ok) {
+        // A successful run supersedes earlier warnings: whatever they were about
+        // has evidently been dealt with, so stop nagging. They stay in the
+        // Alerts tab as a record -- only the banner stands down.
+        if (alerts.some((a) => !a.ack)) {
+          alerts.forEach((a) => (a.ack = true));
+          save(LS_ALERTS, alerts);
+          renderLastAlert();
+          document.querySelectorAll("#amdm-sticky .amdm-crit").forEach((c) => c.remove());
+        }
+      }
+
       const pkTxt = pk ? `peak VRAM ${fmtGB(pk)} GB` : "";
       if (ok && cfg.notifyDone) {
         notify("Render finished", `${dur(lastRun)}${pkTxt ? " -- " + pkTxt : ""}`, true);

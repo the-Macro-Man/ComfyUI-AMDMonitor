@@ -151,6 +151,10 @@ fired and when — the explanation outlives the crash.
 
 The **H** button turns red while an alert is unread. Open it for the full list.
 
+Alerts stand down on their own once a run **succeeds** — whatever they were warning about
+has evidently been dealt with. They stay in the Alerts tab as a record; only the banner
+clears. Dismiss manually with the **×** at any time.
+
 On Windows the desktop toast is labelled with the host application ("electron.app.Comfy
 Desktop") and uses its icon, which the Web Notification API cannot override. The in-page
 toast and alert cards carry this extension's own icon.
