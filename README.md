@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-3da639.svg)](LICENSE)
 [![Comfy Registry](https://img.shields.io/badge/Comfy%20Registry-comfyui--amdmonitor-1a73e8)](https://registry.comfy.org/nodes/comfyui-amdmonitor)
 [![GPU](https://img.shields.io/badge/GPU-AMD%20%2F%20ROCm-ed1c24)](#why-nvml-based-monitors-cant-do-this)
-[![Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](#where-the-data-comes-from)
+[![Installs](https://img.shields.io/badge/extra%20installs-none-brightgreen)](#compatibility)
 [![Stars](https://img.shields.io/github/stars/the-Macro-Man/ComfyUI-AMDMonitor?style=flat&color=f0b400)](https://github.com/the-Macro-Man/ComfyUI-AMDMonitor/stargazers)
 
 VRAM monitoring and run notifications for **AMD / ROCm** GPUs in ComfyUI.
@@ -12,7 +12,10 @@ Most ComfyUI resource monitors read GPU stats through **pynvml**, which is NVIDI
 On an AMD card they can show CPU and RAM but never VRAM. This extension shows VRAM,
 peak usage, and tells you when your render finishes.
 
-No Python dependencies. No custom nodes. Frontend only.
+It also keeps a record: every run's model, settings, outputs and peak usage, plus the
+ComfyUI log for that run — written to disk as it happens, so it survives the crash.
+
+No custom nodes. Nothing to install beyond the extension itself.
 
 <img width="280" height="373" alt="image" src="https://github.com/user-attachments/assets/24f695c5-14b5-4df4-b7c2-7d6193a7a2ec" />
 
@@ -29,10 +32,12 @@ No Python dependencies. No custom nodes. Frontend only.
 
 **GPU**
 
-- **VRAM per GPU** — works on ROCm, including multi-GPU and integrated Radeon graphics
+- **VRAM per GPU** — works on ROCm, multi-GPU aware
 - **Peak VRAM per run** — the high-water mark, colour-coded, reset at the start of each job
-- **ComfyUI vs other VRAM** — how much the allocator holds versus everything else on the card
-- **VRAM graph** — a sparkline of the run, so you can see load spikes and decode plateaus
+- **VRAM graph** — a sparkline of the run, with guides at the warning thresholds, so you
+  can see load spikes and decode plateaus
+- **Integrated GPUs hidden by default** — their "VRAM" is shared system RAM and reads as
+  100% for reasons that have nothing to do with ComfyUI
 
 **System**
 
@@ -60,8 +65,10 @@ No Python dependencies. No custom nodes. Frontend only.
 
 **Interface**
 
-- **Every row has its own toggle** — 18 switches, grouped, persisted locally
+- **Every row has its own toggle** — 19 switches, grouped, persisted locally
 - Draggable, **resizable** (drag the right edge), collapsible, remembers position and width
+- **Survives restarts gracefully** — a ComfyUI restart dims the panel and says
+  `Reconnecting…` rather than flashing an error
 
 ## Install
 
@@ -133,7 +140,20 @@ Render finished -- 12:47 -- peak VRAM 12.2 GB
 
 Desktop notifications require browser permission. **Click the ⚙ gear once** and your
 browser will ask — permission can only be requested from a click, so it won't prompt
-on its own. Use **test alert** to confirm sound and permissions.
+on its own. Use **Test Alert** to confirm sound and permissions.
+
+### Critical alerts are different
+
+A partial load, an out-of-memory line or a failed run produces a **sticky red card that
+does not auto-dismiss**, because the abort it is warning about tends to kill the page a
+few seconds later. Those alerts are also saved, so when you restart, the panel shows what
+fired and when — the explanation outlives the crash.
+
+The **H** button turns red while an alert is unread. Open it for the full list.
+
+On Windows the desktop toast is labelled with the host application ("electron.app.Comfy
+Desktop") and uses its icon, which the Web Notification API cannot override. The in-page
+toast and alert cards carry this extension's own icon.
 
 ## Toggles
 
@@ -197,14 +217,18 @@ Edit `DEFAULTS` at the top of `js/amd_monitor.js`:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `pollMs` | `2000` | poll interval, milliseconds |
+| `pollMs` | `2000` | stats poll interval, milliseconds |
+| `logPollMs` | `1000` | log poll interval; faster because ComfyUI's buffer is small |
 | `warnAt` | `92` | percent VRAM that triggers red and the warning |
+
+`KEEP_RUNS` in `__init__.py` (default `50`) sets how many runs are kept on disk.
 
 ## Compatibility
 
 - Works on **AMD / ROCm** on Windows and Linux.
 - Also works on NVIDIA and CPU-only setups — it reads whatever ComfyUI reports.
-- Requires nothing beyond ComfyUI itself.
+- Uses `psutil`, which ships with ComfyUI. If it is missing, the System rows are hidden
+  and everything else still works.
 
 If the panel doesn't appear, open the browser console (F12) and look for
 `[AMDMonitor] ready`.
