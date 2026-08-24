@@ -46,8 +46,9 @@ nav a:hover{color:var(--fg);text-decoration:none}
 @media(max-width:720px){nav .nl{display:none}}
 
 /* hero */
-header{padding:64px 0 52px;text-align:center}
-header img.logo{width:76px;height:76px;border-radius:18px;margin-bottom:18px}
+/* header carries .wrap, whose class selector outranks a bare element selector --
+   so this must be header.wrap or the padding is silently discarded */
+header.wrap{padding:64px 22px 76px;text-align:center}
 header h1{font-size:40px;margin:0 0 10px;letter-spacing:-.02em}
 header p{color:var(--dim);font-size:18px;max-width:640px;margin:0 auto 22px}
 .badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:26px}
@@ -55,8 +56,8 @@ header p{color:var(--dim);font-size:18px;max-width:640px;margin:0 auto 22px}
   border:1px solid var(--line2);color:var(--dim)}
 .badges span.on{border-color:var(--green);color:var(--green)}
 .cta{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-.btn{display:inline-block;padding:10px 20px;border-radius:8px;font-size:14px;
-  font-weight:600;border:1px solid var(--line2);color:var(--fg)}
+.btn{display:inline-block;padding:6px 16px;border-radius:6px;font-size:13.5px;
+  line-height:1.5;font-weight:600;border:1px solid var(--line2);color:var(--fg)}
 .btn:hover{border-color:var(--faint);text-decoration:none}
 .btn.p{background:var(--green);border-color:var(--green);color:#0a0a0a}
 .btn.p:hover{filter:brightness(1.1)}
@@ -100,7 +101,6 @@ footer{padding:40px 0 60px;text-align:center;color:var(--faint);font-size:13px;
 </div></nav>
 
 <header class="wrap">
-  <img class="logo" src="https://raw.githubusercontent.com/the-Macro-Man/ComfyUI-AMDMonitor/main/icon.png" alt="AMD Monitor">
   <h1>ComfyUI-AMDMonitor</h1>
   <p>VRAM monitoring, crash early-warning and per-run analytics for
      <b>AMD&nbsp;/&nbsp;ROCm</b> GPUs in ComfyUI — the numbers NVML-based monitors
