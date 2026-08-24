@@ -50,6 +50,7 @@ const DEFAULTS = {
   warnPartial: true,
   saveToDisk: true,
   autoHideAlerts: true,
+  aiSendPrompt: false,
   showNodeTimes: true,
   warnAt: 92,
   alertHideSec: 10,
@@ -155,6 +156,78 @@ function linkNum(dict, v, want) {
     if (typeof i[want] === "number") return i[want];
     if (typeof i.value === "number") return i.value;
   }
+  return null;
+}
+
+/*
+ * Built-in error explanations.
+ *
+ * ComfyUI's errors are precise and unhelpful. These patterns turn the common
+ * ones into plain English using the context already recorded for that run. No
+ * network, no configuration, no LLM -- so every user gets this, and the answers
+ * are always correct rather than merely plausible. The LLM handles the long tail.
+ */
+const FEATURE_WIDTHS = {
+  30720: "Krea2 (Qwen3-VL 4B)", 12288: "flux2", 6144: "LTX 2.5 (Gemma4 12B)",
+  4096: "wan", 2560: "lumina2 / Z-Image",
+};
+
+function explainError(err, rec) {
+  const e = String(err || "");
+  if (!e) return null;
+  const model = rec?.model ? ` Your run used <code>${esc(rec.model)}</code>.` : "";
+
+  let m = e.match(/mat1 and mat2 shapes cannot be multiplied \((\d+)x(\d+) and (\d+)x(\d+)\)/);
+  if (m) {
+    const got = +m[2], want = +m[3];
+    const gn = FEATURE_WIDTHS[got], wn = FEATURE_WIDTHS[want];
+    return { title: "Text encoder doesn't match the model", body:
+      `The conditioning has <b>${got}</b> features per token${gn ? ` (${gn})` : ""}, ` +
+      `but the model expects <b>${want}</b>${wn ? ` (${wn})` : ""}. ` +
+      (wn ? `Set your text encoder to <b>${wn}</b>, ` : "Load the matching text encoder, ") +
+      `or load the diffusion model that goes with the encoder you have.${model}` };
+  }
+
+  m = e.match(/size of tensor a \((\d+)\) must match the size of tensor b \((\d+)\)/i);
+  if (m) {
+    return { title: "VAE doesn't match the model", body:
+      `The latent has <b>${m[1]}</b> channels but the VAE expects <b>${m[2]}</b>. ` +
+      "These come from different model families — 16-channel latents are the " +
+      "Flux / SD3 / Krea2 family, while video models use far more. Load the VAE " +
+      `that belongs to this model in your <code>VAELoader</code>.${model}` };
+  }
+
+  if (/Fatal Python error|Aborted/i.test(e) || /loaded partially/i.test(rec?.load || "")) {
+    const pk = rec?.peak ? ` Peak VRAM reached ${(rec.peak / 1024 ** 3).toFixed(1)} GB.` : "";
+    return { title: "Model too large — the process was killed", body:
+      "The model didn't fit, so weights were offloaded to system RAM, and ROCm " +
+      "aborted the process. There is no traceback because it wasn't a Python " +
+      `error.${pk} Use a smaller quantisation — one that reports ` +
+      "<code>loaded completely</code> — or lower the resolution to free headroom." };
+  }
+
+  if (/out of memory|OutOfMemory|HIP out of memory/i.test(e)) {
+    return { title: "Out of memory", body:
+      "The GPU ran out of memory during the run rather than at load time, which " +
+      "usually means resolution or batch size rather than the model itself. " +
+      "Lower either, or close other applications using the card." };
+  }
+
+  m = e.match(/Prompt too long for '([^']+)'/);
+  if (m) {
+    return { title: "Prompt exceeded the remote encoder's payload limit", body:
+      `The conditioning for <b>${esc(m[1])}</b> was too large to return over ` +
+      "RunPod's 20 MB response limit. Shorten the prompt, or use a backend with " +
+      "no cap." };
+  }
+
+  if (/No such file or directory|not in list|Value not in list/i.test(e)) {
+    return { title: "A file or option the workflow expects is missing", body:
+      "A model, LoRA or VAE named in the workflow isn't present, or a dropdown " +
+      "value no longer exists on this install. Open the node named in the error " +
+      "and re-pick the file." };
+  }
+
   return null;
 }
 
@@ -302,6 +375,27 @@ app.registerExtension({
       #amdm-modal td { padding:4px 6px; border-bottom:1px solid #27272a; font-size:11.5px;
                        vertical-align:top; }
       #amdm-modal tr.bad td { color:#ff8b8c; }
+      #amdm-modal .amdm-exp { margin-top:8px; padding:10px 12px; border-radius:6px;
+        background:#4c9aff12; border-left:3px solid #4c9aff; font-size:11.5px; }
+      #amdm-modal .amdm-exp b { display:block; color:#e6e6e6; margin-bottom:3px; }
+      #amdm-modal .amdm-ai { margin-top:8px; padding:10px 12px; border-radius:6px;
+        background:#52c41a10; border-left:3px solid #52c41a; font-size:11.5px;
+        white-space:normal; }
+      #amdm-modal .amdm-aif { margin-top:6px; font-size:10px; opacity:.45; }
+      #amdm-modal .amdm-aibtns { margin-top:8px; }
+      #amdm-modal .amdm-ai-cfg { margin-top:16px; padding-top:14px;
+        border-top:1px solid #3f3f46; }
+      #amdm-modal .amdm-ai-cfg h4 { margin:0 0 2px; font-size:11px; text-transform:uppercase;
+        letter-spacing:.06em; opacity:.6; }
+      #amdm-modal .amdm-hint { font-size:10.5px; opacity:.5; margin:0 0 8px; }
+      #amdm-modal .amdm-f { display:flex; align-items:center; gap:10px; margin:5px 0;
+        font-size:11.5px; }
+      #amdm-modal .amdm-f > span:first-child { flex:0 0 74px; opacity:.6; }
+      #amdm-modal .amdm-f input[type=text], #amdm-modal .amdm-f input[type=password] {
+        flex:1; background:#0f0f11; border:1px solid #3f3f46; border-radius:5px;
+        color:#e6e6e6; padding:5px 8px; font:inherit; font-size:11.5px; }
+      #amdm-modal .amdm-f input:focus { outline:none; border-color:#52c41a; }
+
       #amdm-modal tr.row { cursor:pointer; }
       #amdm-modal tr.row:hover td { background:#ffffff08; }
       #amdm-modal .amdm-detail td { font-size:11px; opacity:.85; background:#ffffff05; }
@@ -472,6 +566,66 @@ app.registerExtension({
       }
     }
 
+    /* ── optional AI analysis ─────────────────────────────────────────── */
+
+    const AI = { base: "", model: "", has_key: false, env_key: false, models: [] };
+
+    const aiLoadConfig = () => api.fetchApi("/amdmonitor/ai/config")
+      .then((r) => r.json()).then((j) => Object.assign(AI, j)).catch(() => {});
+
+    /*
+     * Only measured facts go to the model. Prompt text is excluded unless the
+     * user opts in -- it is the one field that is genuinely personal, and the
+     * analysis works fine without it.
+     */
+    function runFacts(h) {
+      const f = {
+        model: h.model, size: h.size, steps: h.steps, cfg: h.cfg,
+        sampler: h.sampler, duration_s: Math.round(h.dur / 1000),
+        sec_per_step: h.sps || null,
+        peak_vram_gb: h.peak ? +(h.peak / GB).toFixed(2) : null,
+        peak_ram_gb: h.peakRam ? +(h.peakRam / GB).toFixed(2) : null,
+        load_state: h.load || null, result: h.result,
+        loras: h.loras || null,
+        node_seconds: (h.nodes || []).reduce(
+          (o, t) => (o[t.label] = +(t.ms / 1000).toFixed(1), o), {}),
+      };
+      if (h.result !== "ok" && h.error) f.error = h.error;
+      if (cfg.aiSendPrompt && h.prompt) f.prompt = h.prompt;
+      return f;
+    }
+
+    async function aiAsk(kind, h, into) {
+      if (!AI.base) { into.innerHTML = `<span class="amdm-warn">No endpoint configured — set one in Settings.</span>`; return; }
+      into.textContent = "Thinking…";
+      // same-model peers only: seconds-per-step is meaningless across models
+      const peers = history.filter((x) => x.model === h.model && x.result === "ok")
+                           .slice(0, 6).map(runFacts);
+      const ask = kind === "explain"
+        ? `This ComfyUI run failed. Explain the cause in plain language and give the fix.\n\n`
+          + JSON.stringify(runFacts(h), null, 1)
+        : `Analyse this run. Where did the time go, and is it memory- or compute-bound?\n\n`
+          + `THIS RUN:\n${JSON.stringify(runFacts(h), null, 1)}\n\n`
+          + (peers.length > 1
+              ? `PREVIOUS SUCCESSFUL RUNS OF THE SAME MODEL (${peers.length}):\n`
+                + JSON.stringify(peers, null, 1)
+              : `No other successful runs of this model are recorded, so do not infer trends.`);
+      try {
+        const r = await api.fetchApi("/amdmonitor/ai/analyse", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base: AI.base, model: AI.model, prompt: ask }),
+        });
+        const j = await r.json();
+        if (j.error) { into.innerHTML = `<span class="amdm-warn">${esc(j.error)}</span>`; return; }
+        h.analysis = j.text;
+        save(LS_HIST, history);
+        into.innerHTML = `<div class="amdm-ai">${esc(j.text).replace(/\n/g, "<br>")}
+          <div class="amdm-aif">${esc(j.model)} · interpretation only — the figures above are measured</div></div>`;
+      } catch (e) {
+        into.innerHTML = `<span class="amdm-warn">${esc(String(e))}</span>`;
+      }
+    }
+
     /* ── history modal ────────────────────────────────────────────────── */
 
     let dataDir = "";
@@ -509,6 +663,15 @@ app.registerExtension({
                   </div>`;
                 }).join("")}
             </div>` : ""}
+          ${(() => { const x = explainError(h.error, h);
+            return x ? `<div class="amdm-exp"><b>${x.title}</b>${x.body}</div>` : ""; })()}
+          <div class="amdm-btns amdm-aibtns" data-r="${idx}">
+            ${h.result !== "ok"
+              ? `<button data-ai="explain" data-i="${idx}">Explain with AI</button>`
+              : `<button data-ai="analyse" data-i="${idx}">Analyse with AI</button>`}
+          </div>
+          <div class="amdm-aiout" data-o="${idx}">${
+            h.analysis ? `<div class="amdm-ai">${esc(h.analysis).replace(/\n/g, "<br>")}</div>` : ""}</div>
         </td></tr>`).join("")
         : `<tr><td colspan="5" style="opacity:.5;padding:14px 6px">
              No runs recorded yet.</td></tr>`;
@@ -550,6 +713,11 @@ app.registerExtension({
       m.querySelectorAll("tr.row").forEach((tr) => (tr.onclick = () => {
         const d = m.querySelector(`tr.amdm-detail[data-d="${tr.dataset.i}"]`);
         if (d) d.style.display = d.style.display === "none" ? "" : "none";
+      }));
+      m.querySelectorAll("button[data-ai]").forEach((b) => (b.onclick = (ev) => {
+        ev.stopPropagation();
+        const i = +b.dataset.i;
+        aiAsk(b.dataset.ai, history[i], m.querySelector(`.amdm-aiout[data-o="${i}"]`));
       }));
       m.querySelector(".amdm-clear").onclick = () => {
         if (tab === "runs") { history = []; save(LS_HIST, history); }
@@ -598,7 +766,36 @@ app.registerExtension({
                   cfg[k] ? " checked" : ""}> ${esc(l)}</label>`).join("")}
               </div>`).join("")}
           </div>
+          <div class="amdm-ai-cfg">
+            <h4>AI analysis <span style="opacity:.5;font-weight:400">optional</span></h4>
+            <p class="amdm-hint">Leave the endpoint blank to disable. Built-in error
+              explanations work regardless and never use the network.</p>
+            <label class="amdm-f"><span>Endpoint</span>
+              <input class="amdm-base" type="text" spellcheck="false"
+                placeholder="http://192.168.1.182:11434  ·  https://openrouter.ai/api/v1"
+                value="${esc(AI.base)}"></label>
+            <label class="amdm-f"><span>API key</span>
+              <input class="amdm-key" type="password" spellcheck="false"
+                placeholder="${AI.env_key ? "set via AMDMONITOR_API_KEY"
+                  : AI.has_key ? "stored — leave blank to keep" : "not needed for local Ollama"}"
+                ${AI.env_key ? "disabled" : ""}></label>
+            <label class="amdm-f"><span>Model</span>
+              <span style="display:flex;gap:6px;flex:1">
+                <input class="amdm-model" type="text" spellcheck="false" list="amdm-models"
+                  placeholder="qwen3.5:9b" value="${esc(AI.model)}" style="flex:1">
+                <datalist id="amdm-models">${AI.models.map(
+                  (x) => `<option value="${esc(x)}">`).join("")}</datalist>
+                <button class="amdm-fetch" style="all:unset;cursor:pointer;font-size:10px;
+                  padding:3px 7px;border:1px solid #52525b;border-radius:4px">Fetch</button>
+              </span></label>
+            <label class="amdm-f"><span></span><span style="flex:1;font-size:10.5px">
+              <input type="checkbox" data-k="aiSendPrompt"${cfg.aiSendPrompt ? " checked" : ""}
+                style="accent-color:#52c41a;margin-right:6px">Include prompt text
+              </span></label>
+            <div class="amdm-hint amdm-aistatus"></div>
+          </div>
           <div class="amdm-btns">
+            <button class="amdm-save">Save</button>
             <button class="amdm-reset">Reset Peak</button>
             <button class="amdm-test">Test Alert</button>
             <button class="amdm-defaults">Defaults</button>
@@ -608,6 +805,37 @@ app.registerExtension({
       document.body.appendChild(m);
       m.onclick = (e) => { if (e.target === m) m.remove(); };
       m.querySelector(".amdm-close").onclick = () => m.remove();
+
+      const status = m.querySelector(".amdm-aistatus");
+      const readForm = () => ({
+        base: m.querySelector(".amdm-base").value.trim(),
+        model: m.querySelector(".amdm-model").value.trim(),
+        key: m.querySelector(".amdm-key").value,
+      });
+      m.querySelector(".amdm-save").onclick = async () => {
+        const f = readForm();
+        const r = await api.fetchApi("/amdmonitor/ai/config", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(f),
+        }).then((x) => x.json()).catch(() => ({}));
+        Object.assign(AI, { base: f.base, model: f.model, has_key: !!r.has_key });
+        m.querySelector(".amdm-key").value = "";
+        status.textContent = f.base ? "Saved." : "Saved — AI analysis disabled.";
+      };
+      m.querySelector(".amdm-fetch").onclick = async () => {
+        const f = readForm();
+        if (!f.base) { status.textContent = "Enter an endpoint first."; return; }
+        status.textContent = "Fetching models…";
+        const r = await api.fetchApi("/amdmonitor/ai/models", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base: f.base }),
+        }).then((x) => x.json()).catch((e) => ({ error: String(e) }));
+        if (r.error) { status.innerHTML = `<span class="amdm-warn">${esc(r.error)}</span>`; return; }
+        AI.models = r.models || [];
+        m.querySelector("#amdm-models").innerHTML =
+          AI.models.map((x) => `<option value="${esc(x)}">`).join("");
+        status.textContent = `${AI.models.length} model(s) available — start typing to filter.`;
+      };
       m.querySelectorAll("input[type=checkbox]").forEach((el) => {
         el.onchange = () => { cfg[el.dataset.k] = el.checked; saveCfg(); render(); };
       });
@@ -1059,6 +1287,7 @@ app.registerExtension({
     api.fetchApi("/amdmonitor/runs").then((r) => r.json())
       .then((j) => { dataDir = j.dir || ""; }).catch(() => {});
 
+    aiLoadConfig();
     tick();
     setInterval(tick, cfg.pollMs);
     setInterval(() => { if (running || !logDead) pollLog(); }, cfg.logPollMs);

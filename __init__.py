@@ -50,6 +50,54 @@ __all__ = ["WEB_DIRECTORY", "NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
 KEEP_RUNS = 50          # prune older run files beyond this
 log = logging.getLogger("AMDMonitor")
 
+# Everything the model is told about this machine. Without it a small local model
+# gives generic advice; with it, it can reason about the actual constraints.
+SYSTEM_PROMPT = """You analyse ComfyUI generation telemetry.
+
+Facts you may rely on:
+- ComfyUI reserves several GB of VRAM for activations, so the practical weight
+  budget is well below the card's total. `usable` in its logs is that budget.
+- "loaded partially" means weights were offloaded to system RAM. On AMD/ROCm this
+  frequently ends in "Fatal Python error: Aborted" with no traceback.
+- `--highvram` on an oversized model reports "loaded completely" but streams from
+  system RAM and is dramatically slower. It is not a fix.
+- Sampler time dominating with flat VRAM means compute-bound; resolution is the
+  lever. VRAM at 100% with heavy swap means memory-bound.
+
+Rules:
+- The numbers given to you are measured. Never invent or recompute them.
+- Never compare seconds-per-step across different models; they are not comparable.
+- Do not infer a trend from fewer than three runs of the same model. Say so instead.
+- If settings differ between runs being compared, say which.
+Answer in at most 150 words. Be concrete. Lead with the single most useful point."""
+
+
+def _cfg_path():
+    return os.path.join(_base_dir(), "config.json")
+
+
+def _load_cfg():
+    try:
+        with open(_cfg_path(), encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
+def _save_cfg(c):
+    try:
+        with open(_cfg_path(), "w", encoding="utf-8") as fh:
+            json.dump(c, fh, indent=2)
+        return True
+    except Exception as e:
+        log.warning(f"[AMDMonitor] cannot save config: {e}")
+        return False
+
+
+def _api_key(c):
+    """Env var wins, so a key need never touch disk."""
+    return os.environ.get("AMDMONITOR_API_KEY") or c.get("key") or ""
+
 try:
     import psutil
     _HAS_PSUTIL = True
@@ -316,6 +364,107 @@ try:
         except Exception:
             pass
         return web.json_response({"runs": out, "dir": _base_dir()})
+
+    # ── optional AI analysis ────────────────────────────────────────────────
+    #
+    # Off unless the user supplies an endpoint. No default URL, no bundled key.
+    # Ollama, LM Studio, OpenRouter and OpenAI all speak the same
+    # OpenAI-compatible API, so one code path covers them.
+    #
+    # The API key lives here, never in the browser: localStorage is readable by
+    # every other extension on the page, which is no place for a billable
+    # credential. The frontend is only ever told whether one is set.
+
+    async def _provider(session_json, path, method="GET", body=None, timeout=180):
+        import aiohttp
+        c = _load_cfg()
+        base = (session_json.get("base") or c.get("base") or "").rstrip("/")
+        if not base:
+            return None, "No endpoint configured."
+        if not base.endswith("/v1"):
+            base += "/v1"
+        headers = {"Content-Type": "application/json"}
+        key = _api_key(c)
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+            # OpenRouter asks for these; harmless elsewhere.
+            headers["HTTP-Referer"] = "https://github.com/the-Macro-Man/ComfyUI-AMDMonitor"
+            headers["X-Title"] = "ComfyUI-AMDMonitor"
+        try:
+            to = aiohttp.ClientTimeout(total=timeout)
+            async with aiohttp.ClientSession(timeout=to) as s:
+                async with s.request(method, base + path, headers=headers,
+                                     json=body) as r:
+                    txt = await r.text()
+                    if r.status >= 400:
+                        hint = {401: "Bad or missing API key.",
+                                402: "Provider reports insufficient credit.",
+                                404: "Endpoint or model not found.",
+                                429: "Rate limited by the provider."}.get(r.status, "")
+                        return None, f"HTTP {r.status}. {hint} {txt[:300]}".strip()
+                    return json.loads(txt), None
+        except Exception as e:
+            return None, f"{type(e).__name__}: {e}"
+
+    @PromptServer.instance.routes.get("/amdmonitor/ai/config")
+    async def _amdm_ai_get(request):
+        c = _load_cfg()
+        return web.json_response({"base": c.get("base", ""), "model": c.get("model", ""),
+                                  "has_key": bool(_api_key(c)),
+                                  "env_key": bool(os.environ.get("AMDMONITOR_API_KEY"))})
+
+    @PromptServer.instance.routes.post("/amdmonitor/ai/config")
+    async def _amdm_ai_set(request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        c = _load_cfg()
+        for k in ("base", "model"):
+            if k in body:
+                c[k] = str(body[k]).strip()
+        if body.get("key"):                       # blank means "leave as is"
+            c["key"] = str(body["key"]).strip()
+        if body.get("clear_key"):
+            c.pop("key", None)
+        _save_cfg(c)
+        return web.json_response({"ok": True, "has_key": bool(_api_key(c))})
+
+    @PromptServer.instance.routes.post("/amdmonitor/ai/models")
+    async def _amdm_ai_models(request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        data, err = await _provider(body, "/models", timeout=30)
+        if err:
+            return web.json_response({"error": err}, status=200)
+        items = (data or {}).get("data") or []
+        names = sorted({i.get("id") for i in items if i.get("id")})
+        return web.json_response({"models": names})
+
+    @PromptServer.instance.routes.post("/amdmonitor/ai/analyse")
+    async def _amdm_ai_analyse(request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        c = _load_cfg()
+        model = body.get("model") or c.get("model")
+        if not model:
+            return web.json_response({"error": "No model selected."})
+        user = body.get("prompt") or ""
+        payload = {"model": model, "temperature": 0.2, "stream": False,
+                   "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                                {"role": "user", "content": user}]}
+        data, err = await _provider(body, "/chat/completions", "POST", payload)
+        if err:
+            return web.json_response({"error": err})
+        try:
+            text = data["choices"][0]["message"]["content"].strip()
+        except Exception:
+            return web.json_response({"error": f"Unexpected response: {str(data)[:300]}"})
+        return web.json_response({"text": text, "model": model})
 
     print(f"[AMDMonitor] loaded - data dir {_base_dir()}"
           + ("" if _HAS_PSUTIL else " (psutil MISSING)"))

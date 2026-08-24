@@ -163,6 +163,65 @@ VRAM check re-arms every run. They stay in the Alerts tab as a record; only the 
 clears. The card itself auto-hides after 10 seconds; untick **Auto-hide alerts** to keep
 it until dismissed.
 
+## Errors, explained
+
+ComfyUI's errors are precise and unhelpful. Common ones are translated into plain
+English using the context already recorded for that run — **no network, no
+configuration, no AI**:
+
+```
+RuntimeError: mat1 and mat2 shapes cannot be multiplied (512x30720 and 12288x4096)
+```
+
+becomes
+
+> **Text encoder doesn't match the model.** The conditioning has 30720 features per
+> token (Krea2 (Qwen3-VL 4B)), but the model expects 12288 (flux2). Set your text
+> encoder to flux2, or load the diffusion model that goes with the encoder you have.
+
+Recognised today: text-encoder mismatch, VAE/model mismatch, ROCm abort from a partial
+load, out of memory, remote-encoder payload limit, and missing files or dropdown values.
+Anything else falls through to the optional AI analysis.
+
+## AI analysis (optional)
+
+Off unless you configure it. There is no bundled endpoint and no default key.
+
+Works with anything speaking the OpenAI-compatible API:
+
+| Provider | Endpoint | Key |
+|---|---|---|
+| Ollama (local or LAN) | `http://192.168.1.182:11434` | none |
+| LM Studio | `http://localhost:1234/v1` | none |
+| OpenRouter | `https://openrouter.ai/api/v1` | required |
+| OpenAI | `https://api.openai.com/v1` | required |
+
+Set it up in **⚙ Settings → AI analysis**: paste an endpoint, press **Fetch** to list
+models, pick one, **Save**. Then each run in **H → Runs** gains an **Analyse with AI**
+button, and failed runs get **Explain with AI**.
+
+**It interprets measurements, it never produces them.** Timings, VRAM and load state come
+from the extension; the model only reasons about them. Its output is labelled as
+interpretation and shown next to the real figures, so an invented number is obvious.
+
+It is also told what your hardware actually does — that a partial load on ROCm tends to
+abort, that `--highvram` on an oversized model is slow rather than fixed, that
+seconds-per-step is not comparable across models. So it gives specific advice rather than
+"consider upgrading your GPU".
+
+### What gets sent
+
+Model name, size, steps, sampler, CFG, LoRA names, durations, per-node timings, peak
+VRAM and RAM, load state, and the error if there was one. Plus up to six previous
+successful runs **of the same model**, for context.
+
+**Prompt text is excluded** unless you tick *Include prompt text*.
+
+A local endpoint keeps all of it on your own network. A remote provider does not — the
+setup panel says so plainly. The API key is stored server-side in
+`user/amdmonitor/config.json` and is never sent to the browser; set
+`AMDMONITOR_API_KEY` instead if you'd rather it never touched disk.
+
 ## Where did the time go?
 
 Every run records a measured breakdown, taken from ComfyUI's own node-transition events

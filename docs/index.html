@@ -97,7 +97,7 @@ footer{padding:40px 0 60px;text-align:center;color:var(--faint);font-size:13px;
   <a class="nl" href="#vram">VRAM</a>
   <a class="nl" href="#timing">Timing</a>
   <a class="nl" href="#data">Data</a>
-  <a class="nl" href="#roadmap">Roadmap</a>
+  <a class="nl" href="#roadmap">Analysis</a>
   <a href="https://github.com/the-Macro-Man/ComfyUI-AMDMonitor">GitHub</a>
 </div></nav>
 
@@ -108,7 +108,7 @@ footer{padding:40px 0 60px;text-align:center;color:var(--faint);font-size:13px;
      can never show you.</p>
   <div class="badges">
     <span class="on">MIT</span><span class="on">No extra installs</span>
-    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span>v1.4.0</span>
+    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span>v1.5.0</span>
   </div>
   <div class="cta">
     <a class="btn p" href="#install">Install</a>
@@ -267,9 +267,9 @@ git clone https://github.com/the-Macro-Man/ComfyUI-AMDMonitor</code></pre>
 </div></section>
 
 <section id="roadmap"><div class="wrap">
-  <h2>Roadmap</h2>
+  <h2>Explained errors &amp; AI analysis</h2>
 
-  <h3>Explained errors <span class="soon">next</span></h3>
+  <h3>Explained errors <span class="soon" style="background:#52c41a">shipped v1.5.0</span></h3>
   <p>ComfyUI's errors are precise and unhelpful. A built-in pattern table turns the
      common ones into plain English, using the context already recorded for that run —
      no network, no configuration, works for everyone:</p>
@@ -279,7 +279,7 @@ git clone https://github.com/the-Macro-Man/ComfyUI-AMDMonitor</code></pre>
     Krea2 conditioning (30720 features per token), but the model expects flux2 (12288).
     Set the text encoder to <code>flux2</code>.</div>
 
-  <h3>AI run analysis <span class="soon">planned</span></h3>
+  <h3>AI run analysis <span class="soon" style="background:#52c41a">shipped v1.5.0</span></h3>
   <p>An optional layer over a local <b>Ollama</b> endpoint, or an API provider such as
      OpenRouter. It interprets the measurements — it never produces them:</p>
   <ul>
@@ -288,6 +288,17 @@ git clone https://github.com/the-Macro-Man/ComfyUI-AMDMonitor</code></pre>
     <li><b>Session summary</b> — trends, grouped per model, never mixing them</li>
     <li><b>Explain this failure</b> — the error plus the tail of that run's log</li>
   </ul>
+  <table>
+    <tr><th>Provider</th><th>Endpoint</th><th>Key</th></tr>
+    <tr><td>Ollama (local / LAN)</td><td><code>http://192.168.1.182:11434</code></td><td>none</td></tr>
+    <tr><td>LM Studio</td><td><code>http://localhost:1234/v1</code></td><td>none</td></tr>
+    <tr><td>OpenRouter</td><td><code>https://openrouter.ai/api/v1</code></td><td>required</td></tr>
+    <tr><td>OpenAI</td><td><code>https://api.openai.com/v1</code></td><td>required</td></tr>
+  </table>
+  <p>Sent: model, size, steps, sampler, LoRAs, durations, per-node timings, peak VRAM and
+     RAM, load state, and the error if there was one — plus up to six previous successful
+     runs <i>of the same model</i>. <b>Prompt text is excluded unless you opt in.</b>
+     The API key is stored server-side and never reaches the browser.</p>
   <div class="note warn"><b>Off by default, and explicit about what it sends.</b> There is
     no bundled endpoint and no default key. Prompt text is excluded unless you opt in.
     Local endpoints keep everything on your own network; a remote provider does not, and
