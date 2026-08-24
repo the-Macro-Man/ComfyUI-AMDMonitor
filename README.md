@@ -194,8 +194,11 @@ panel stays compact. Every row is independently switchable.
 | **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load · Auto-hide alerts |
 
 **H** in the header opens run history and alerts. It turns red when there is an unread
-alert. In the gear panel: **Reset Peak** clears the high-water mark and graph,
-**Test Alert** fires a sample critical warning, **Defaults** restores everything.
+alert. Two tabs — **Runs** and **Alerts** — each with **Export CSV**, **Clear** (that tab
+only) and **Close**. Click any run row to expand its full detail.
+
+In the settings window: **Reset Peak** clears the high-water mark and graph, **Test
+Alert** fires a sample critical warning, **Defaults** restores everything.
 
 ### Why integrated GPUs are hidden by default
 
@@ -214,6 +217,16 @@ Settings, panel position and width all persist in `localStorage`.
 | ComfyUI `/queue` | the executing node's real name | falls back to `node 237` |
 | ComfyUI `/internal/logs/raw` | partial-load detection | the warning is silently disabled |
 | `/amdmonitor/stats` (this extension, psutil) | swap, CPU, disk, network | System rows are hidden automatically |
+
+This extension adds four routes of its own, all under `/amdmonitor/`:
+
+| Route | Purpose |
+|---|---|
+| `GET /amdmonitor/stats` | swap, CPU, disk and network, via psutil. Read-only. |
+| `POST /amdmonitor/run/start` | opens a log file for the run about to begin |
+| `POST /amdmonitor/run/end` | writes the run record, appends `runs.csv`, prunes old runs |
+| `POST /amdmonitor/alert` | appends to `alerts.log` and to the current run's log |
+| `GET /amdmonitor/runs` | reads back saved run records |
 
 If psutil is missing the route still answers, reporting `available: false`, and the
 frontend simply hides those rows. Nothing is ever executed.
@@ -235,8 +248,20 @@ The log is **appended as the run progresses, flushed every line**. That is the w
 point: when ROCm aborts there is no clean shutdown, so anything buffered is lost. Writing
 as we go leaves a file ending at the exact moment things went wrong.
 
-The last 50 runs are kept; older ones are pruned. Turn the whole thing off with the
-**Save runs and logs to disk** toggle, and history still works in the browser.
+`runs.csv` has one row per run, ready for Excel:
+
+```
+when, duration_s, result, model, loras, size, steps, cfg, sampler, seed,
+peak_vram_gb, peak_ram_gb, load_state, sec_per_step, slowest_node, node_times,
+error, outputs, log_file
+```
+
+`load_state` is the crash-relevant one — `completely - 12.2 GB resident` or
+`partially - 9.5 GB resident, 7.2 GB offloaded`.
+
+The last 50 runs are kept; older ones are pruned (`KEEP_RUNS` in `__init__.py`). Turn the
+whole thing off with the **Save runs and logs to disk** toggle, and history still works in
+the browser.
 
 ## Configuration
 
@@ -247,6 +272,7 @@ Edit `DEFAULTS` at the top of `js/amd_monitor.js`:
 | `pollMs` | `2000` | stats poll interval, milliseconds |
 | `logPollMs` | `1000` | log poll interval; faster because ComfyUI's buffer is small |
 | `warnAt` | `92` | percent VRAM that triggers red and the warning |
+| `alertHideSec` | `10` | how long a critical alert card stays before auto-hiding |
 
 `KEEP_RUNS` in `__init__.py` (default `50`) sets how many runs are kept on disk.
 
