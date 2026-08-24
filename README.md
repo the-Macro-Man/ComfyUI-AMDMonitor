@@ -6,6 +6,8 @@
 [![Installs](https://img.shields.io/badge/extra%20installs-none-brightgreen)](#compatibility)
 [![Stars](https://img.shields.io/github/stars/the-Macro-Man/ComfyUI-AMDMonitor?style=flat&color=f0b400)](https://github.com/the-Macro-Man/ComfyUI-AMDMonitor/stargazers)
 
+**[Full documentation →](https://the-macro-man.github.io/ComfyUI-AMDMonitor/)**
+
 VRAM monitoring and run notifications for **AMD / ROCm** GPUs in ComfyUI.
 
 Most ComfyUI resource monitors read GPU stats through **pynvml**, which is NVIDIA-only.

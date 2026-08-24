@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ComfyUI-AMDMonitor — VRAM monitoring for AMD / ROCm</title>
+<meta name="description" content="VRAM monitoring, crash early-warning and per-run analytics for AMD / ROCm GPUs in ComfyUI. Shows what NVML-based monitors cannot.">
+<link rel="icon" href="https://raw.githubusercontent.com/the-Macro-Man/ComfyUI-AMDMonitor/main/icon.png">
+<meta property="og:title" content="ComfyUI-AMDMonitor">
+<meta property="og:description" content="VRAM monitoring and crash early-warning for AMD / ROCm GPUs in ComfyUI.">
+<meta property="og:image" content="https://raw.githubusercontent.com/the-Macro-Man/ComfyUI-AMDMonitor/main/icon.png">
+<style>
+:root{
+  --bg:#0f0f11; --card:#18181b; --line:#27272a; --line2:#3f3f46;
+  --fg:#e6e6e6; --dim:#a1a1aa; --faint:#71717a;
+  --green:#52c41a; --amber:#faad14; --red:#ff4d4f; --blue:#4c9aff;
+  --mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:960px;margin:0 auto;padding:0 22px}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.88em;background:#ffffff0d;
+  padding:.12em .4em;border-radius:4px;color:#e4e4e7}
+pre{background:var(--card);border:1px solid var(--line2);border-radius:8px;
+  padding:14px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;
+  line-height:1.55;margin:16px 0}
+pre code{background:none;padding:0}
+h2{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
+h3{font-size:17px;margin:26px 0 8px}
+section{padding:52px 0;border-top:1px solid var(--line)}
+.lede{color:var(--dim);margin:0 0 22px;font-size:16px}
+
+/* nav */
+nav{position:sticky;top:0;z-index:10;background:#0f0f11ee;
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav .wrap{display:flex;align-items:center;gap:18px;height:56px}
+nav img{width:26px;height:26px;border-radius:6px}
+nav b{font-size:15px;margin-right:auto}
+nav a{color:var(--dim);font-size:14px}
+nav a:hover{color:var(--fg);text-decoration:none}
+@media(max-width:720px){nav .nl{display:none}}
+
+/* hero */
+header{padding:64px 0 52px;text-align:center}
+header img.logo{width:76px;height:76px;border-radius:18px;margin-bottom:18px}
+header h1{font-size:40px;margin:0 0 10px;letter-spacing:-.02em}
+header p{color:var(--dim);font-size:18px;max-width:640px;margin:0 auto 22px}
+.badges{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:26px}
+.badges span{font-size:12px;padding:4px 11px;border-radius:999px;
+  border:1px solid var(--line2);color:var(--dim)}
+.badges span.on{border-color:var(--green);color:var(--green)}
+.cta{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-block;padding:10px 20px;border-radius:8px;font-size:14px;
+  font-weight:600;border:1px solid var(--line2);color:var(--fg)}
+.btn:hover{border-color:var(--faint);text-decoration:none}
+.btn.p{background:var(--green);border-color:var(--green);color:#0a0a0a}
+.btn.p:hover{filter:brightness(1.1)}
+
+/* bits */
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.card{background:var(--card);border:1px solid var(--line2);border-radius:10px;padding:18px}
+.card h4{margin:0 0 6px;font-size:15px}
+.card p{margin:0;color:var(--dim);font-size:14px}
+table{width:100%;border-collapse:collapse;margin:16px 0;font-size:14px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+  color:var(--faint);padding:8px 10px;border-bottom:1px solid var(--line2);font-weight:700}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+td.g{color:var(--green)} td.a{color:var(--amber)} td.r{color:var(--red)}
+.shots{display:flex;gap:14px;flex-wrap:wrap;justify-content:center;margin:24px 0}
+.shots img{border:1px solid var(--line2);border-radius:8px;max-width:100%}
+.note{border-left:3px solid var(--blue);background:#4c9aff12;padding:12px 16px;
+  border-radius:0 6px 6px 0;margin:16px 0;font-size:14.5px;color:var(--dim)}
+.note.warn{border-color:var(--amber);background:#faad1412}
+.note b{color:var(--fg)}
+ul{padding-left:20px;color:var(--dim)} li{margin:5px 0}
+li b{color:var(--fg)}
+footer{padding:40px 0 60px;text-align:center;color:var(--faint);font-size:13px;
+  border-top:1px solid var(--line)}
+.soon{font-size:10px;background:var(--amber);color:#111;padding:2px 7px;
+  border-radius:999px;vertical-align:middle;margin-left:8px;font-weight:700}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap">
+  <img src="https://raw.githubusercontent.com/the-Macro-Man/ComfyUI-AMDMonitor/main/icon.png" alt="">
+  <b>AMD Monitor</b>
+  <a class="nl" href="#why">Why</a>
+  <a class="nl" href="#features">Features</a>
+  <a class="nl" href="#vram">VRAM</a>
+  <a class="nl" href="#timing">Timing</a>
+  <a class="nl" href="#data">Data</a>
+  <a class="nl" href="#roadmap">Roadmap</a>
+  <a href="https://github.com/the-Macro-Man/ComfyUI-AMDMonitor">GitHub</a>
+</div></nav>
+
+<header class="wrap">
+  <img class="logo" src="https://raw.githubusercontent.com/the-Macro-Man/ComfyUI-AMDMonitor/main/icon.png" alt="AMD Monitor">
+  <h1>ComfyUI-AMDMonitor</h1>
+  <p>VRAM monitoring, crash early-warning and per-run analytics for
+     <b>AMD&nbsp;/&nbsp;ROCm</b> GPUs in ComfyUI — the numbers NVML-based monitors
+     can never show you.</p>
+  <div class="badges">
+    <span class="on">MIT</span><span class="on">No extra installs</span>
+    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span>v1.4.0</span>
+  </div>
+  <div class="cta">
+    <a class="btn p" href="#install">Install</a>
+    <a class="btn" href="https://github.com/the-Macro-Man/ComfyUI-AMDMonitor">Source</a>
+    <a class="btn" href="https://registry.comfy.org/nodes/comfyui-amdmonitor">Registry</a>
+  </div>
+</header>
+
+<section id="why"><div class="wrap">
+  <h2>Why NVML monitors show nothing</h2>
+  <p class="lede">It isn't that the data is missing. It's that nobody was reading it.</p>
+  <p>Crystools and most resource monitors read GPU statistics through <code>pynvml</code>,
+     NVIDIA's management library. There is no AMD equivalent to fall back on, so on a
+     Radeon card the GPU section simply stays empty — CPU and RAM, nothing else.</p>
+  <p>But ComfyUI's own <code>/system_stats</code> endpoint reports AMD VRAM correctly,
+     because it goes through PyTorch's HIP backend rather than NVML. Every ComfyUI crash
+     report on an AMD machine already contains it:</p>
+  <pre><code>Name: cuda:0 AMD Radeon RX 9070 XT
+VRAM Total: 17095983104
+VRAM Free:  16937648128</code></pre>
+  <p>This extension displays what was always there — and then goes considerably further.</p>
+</div></section>
+
+<section id="features"><div class="wrap">
+  <h2>What it does</h2>
+  <p class="lede">A draggable, resizable panel with 21 independently switchable rows.</p>
+
+  <div class="shots">
+    <img src="https://github.com/user-attachments/assets/24f695c5-14b5-4df4-b7c2-7d6193a7a2ec" alt="Panel at idle" width="260">
+    <img src="https://github.com/user-attachments/assets/fdc77293-3b34-4b0d-99d0-aca6b649a569" alt="Panel during a run" width="260">
+    <img src="https://github.com/user-attachments/assets/03e002bc-bfb8-47fc-a208-3f25832bb3e4" alt="Panel under load" width="260">
+  </div>
+
+  <div class="grid">
+    <div class="card"><h4>VRAM per GPU</h4><p>Works on ROCm, multi-GPU aware.
+      Integrated GPUs hidden by default — their &ldquo;VRAM&rdquo; is shared system RAM
+      and reads 100% for reasons unrelated to ComfyUI.</p></div>
+    <div class="card"><h4>Peak VRAM per run</h4><p>The high-water mark, colour-coded,
+      reset at the start of every job. The number that predicts a crash.</p></div>
+    <div class="card"><h4>VRAM graph</h4><p>A sparkline of the run with guides at the
+      warning thresholds — load spikes and decode plateaus become visible.</p></div>
+    <div class="card"><h4>Partial-load warning</h4><p>Watches ComfyUI's own log and
+      warns the instant a model loads partially, which on ROCm is the last thing you
+      see before the process aborts.</p></div>
+    <div class="card"><h4>Alerts survive crashes</h4><p>Critical warnings are written
+      to disk and shown again after a restart — the explanation outlives the crash it
+      was warning about.</p></div>
+    <div class="card"><h4>Progress + ETA</h4><p>Step <i>k</i> of <i>n</i> with a live
+      estimate, plus the name of the node currently executing.</p></div>
+    <div class="card"><h4>Time by node</h4><p>A measured breakdown of where a run's
+      time actually went, so a slow generation points at its own bottleneck.</p></div>
+    <div class="card"><h4>Run history</h4><p>Model, LoRAs, size, sampler, steps, seed,
+      outputs, errors, load state and peak usage — persisted, exportable as CSV.</p></div>
+    <div class="card"><h4>System vitals</h4><p>Swap, CPU, output-disk free space and
+      disk/network throughput, via psutil.</p></div>
+  </div>
+</div></section>
+
+<section id="vram"><div class="wrap">
+  <h2>Peak VRAM: the number that matters</h2>
+  <p class="lede">On a card without headroom, ComfyUI doesn't fail politely.</p>
+  <p>A model that doesn't fit gets <b>partially offloaded</b> to system RAM, and ROCm
+     then aborts the entire process:</p>
+  <pre><code>loaded partially; 9008.59 MB usable, 8420.02 MB loaded, 8896.00 MB offloaded
+Fatal Python error: Aborted</code></pre>
+  <p>No traceback. No out-of-memory error. ComfyUI simply dies. Watching the peak tells
+     you a workflow is unsafe <i>before</i> it takes the process down.</p>
+
+  <table>
+    <tr><th>Bar colour</th><th>Peak</th><th>Meaning</th></tr>
+    <tr><td class="g">green</td><td>&lt; 80%</td><td>comfortable</td></tr>
+    <tr><td class="a">amber</td><td>80–92%</td><td>tight; a larger model or resolution won't fit</td></tr>
+    <tr><td class="r">red ⚠</td><td>&gt; 92%</td><td>offload risk — expect a crash</td></tr>
+  </table>
+
+  <h3>Measured on a 16 GB RX 9070 XT</h3>
+  <table>
+    <tr><th>Model</th><th>Size</th><th>Load</th><th>Result</th></tr>
+    <tr><td>Krea2</td><td>12.5 GB</td><td>completely</td><td class="g">works</td></tr>
+    <tr><td>Z-Image Turbo</td><td>11.7 GB</td><td>completely</td><td class="g">works</td></tr>
+    <tr><td>Flux2 Klein fp8</td><td>8.78 GB</td><td>completely</td><td class="g">4.6 s/step</td></tr>
+    <tr><td>Flux2 Klein bf16</td><td>16.9 GB</td><td>partially</td><td class="r">aborts</td></tr>
+  </table>
+
+  <div class="note warn"><b>The margin is tighter than you'd think.</b> Across repeated
+    runs of the same 16.9 GB model, the process survived at 7200 MB offloaded and aborted
+    at 7553 MB and 8100 MB. A few hundred megabytes decides it — which is exactly why
+    clearing VRAM appears to &ldquo;sometimes fix&rdquo; the problem.</div>
+
+  <div class="note"><b>ComfyUI reserves more than you expect.</b> On that card
+    <code>usable</code> consistently reports 9.8–10.6 GB, never the full 15.9 GB. The
+    difference is headroom for activations. The practical weight budget is roughly
+    <b>10 GB</b>, not the sticker figure.</div>
+</div></section>
+
+<section id="timing"><div class="wrap">
+  <h2>Where did the time go?</h2>
+  <p class="lede">Measured from ComfyUI's node transitions — never inferred from log text.</p>
+  <p>Every run records a breakdown. Click any row in <b>H → Runs</b> to see it:</p>
+  <pre><code>SamplerCustomAdvanced       6:58   89%
+RemoteTextEncoderSwitch      28s    6%
+UNETLoader                   11s    2%
+VAEDecode                     8s    2%
+SaveImage                     1s    0%</code></pre>
+  <p>Nodes that execute more than once are summed and marked <code>×2</code>.
+     Seconds-per-step is reported as a <b>median</b>, so a single stall doesn't distort
+     the figure. Timings are the one thing that has to be trustworthy, so they are
+     measured rather than parsed.</p>
+</div></section>
+
+<section id="install"><div class="wrap">
+  <h2>Install</h2>
+  <h3>ComfyUI Manager</h3>
+  <p>Search for <b>AMD Monitor</b> and install, or:</p>
+  <pre><code>comfy node install comfyui-amdmonitor</code></pre>
+  <h3>Manual</h3>
+  <pre><code>cd ComfyUI/custom_nodes
+git clone https://github.com/the-Macro-Man/ComfyUI-AMDMonitor</code></pre>
+  <p>Restart ComfyUI. A panel appears top-right — drag it anywhere, drag its right edge
+     to resize, click <b>▾</b> to collapse. Position, width and every setting persist.</p>
+  <div class="note"><b>Notifications need permission.</b> Click the <b>⚙</b> gear once and
+    your browser will ask — permission can only be requested from a click, so it won't
+    prompt on its own. <b>Test Alert</b> confirms sound and permissions.</div>
+</div></section>
+
+<section id="data"><div class="wrap">
+  <h2>Data, and where it goes</h2>
+  <p class="lede">Nothing leaves your machine.</p>
+
+  <h3>What it reads</h3>
+  <table>
+    <tr><th>Source</th><th>Provides</th></tr>
+    <tr><td><code>/system_stats</code></td><td>VRAM per device, system RAM</td></tr>
+    <tr><td>websocket events</td><td>progress, node transitions, queue, run start/end</td></tr>
+    <tr><td><code>/queue</code></td><td>the executing node's real name, run settings</td></tr>
+    <tr><td><code>/internal/logs/raw</code></td><td>partial-load and OOM detection</td></tr>
+    <tr><td><code>/amdmonitor/stats</code></td><td>swap, CPU, disk, network — via psutil</td></tr>
+  </table>
+
+  <h3>What it writes</h3>
+  <p>Run records and per-run logs go to <code>ComfyUI/user/amdmonitor/</code> — never the
+     extension folder, which ComfyUI Manager replaces on update:</p>
+  <pre><code>user/amdmonitor/
+  runs.csv                                one row per run
+  runs/2026-08-24_1147_&lt;promptid&gt;.json    full record
+  runs/2026-08-24_1147_&lt;promptid&gt;.log     ComfyUI's log for that run
+  alerts.log</code></pre>
+  <p>The log is <b>appended as the run progresses and flushed every line</b>. That is the
+     whole point: when ROCm aborts there is no clean shutdown, so anything buffered is
+     lost. Writing as it happens leaves a file ending at the exact moment things went
+     wrong.</p>
+  <p>The last 50 runs are kept; older ones are pruned. One toggle disables disk writing
+     entirely, and history still works in the browser.</p>
+  <div class="note"><b>No telemetry, ever.</b> Nothing is sent anywhere. The only network
+    calls are to ComfyUI's own endpoints on localhost.</div>
+</div></section>
+
+<section id="roadmap"><div class="wrap">
+  <h2>Roadmap</h2>
+
+  <h3>Explained errors <span class="soon">next</span></h3>
+  <p>ComfyUI's errors are precise and unhelpful. A built-in pattern table turns the
+     common ones into plain English, using the context already recorded for that run —
+     no network, no configuration, works for everyone:</p>
+  <pre><code>RuntimeError: mat1 and mat2 shapes cannot be multiplied (512x30720 and 12288x4096)</code></pre>
+  <p>becomes</p>
+  <div class="note"><b>Text encoder doesn't match the model.</b> Your encoder produced
+    Krea2 conditioning (30720 features per token), but the model expects flux2 (12288).
+    Set the text encoder to <code>flux2</code>.</div>
+
+  <h3>AI run analysis <span class="soon">planned</span></h3>
+  <p>An optional layer over a local <b>Ollama</b> endpoint, or an API provider such as
+     OpenRouter. It interprets the measurements — it never produces them:</p>
+  <ul>
+    <li><b>Analyse this run</b> — the bottleneck, and whether you are memory- or compute-bound</li>
+    <li><b>Compare with previous</b> — against the previous run <i>of the same model</i>, with differing settings called out</li>
+    <li><b>Session summary</b> — trends, grouped per model, never mixing them</li>
+    <li><b>Explain this failure</b> — the error plus the tail of that run's log</li>
+  </ul>
+  <div class="note warn"><b>Off by default, and explicit about what it sends.</b> There is
+    no bundled endpoint and no default key. Prompt text is excluded unless you opt in.
+    Local endpoints keep everything on your own network; a remote provider does not, and
+    the interface says so before each call.</div>
+</div></section>
+
+<footer>
+  <p>MIT licensed · built for a 16 GB RX 9070 XT that kept crashing<br>
+  <a href="https://github.com/the-Macro-Man/ComfyUI-AMDMonitor">GitHub</a> ·
+  <a href="https://registry.comfy.org/nodes/comfyui-amdmonitor">Comfy Registry</a> ·
+  <a href="https://github.com/the-Macro-Man/ComfyUI-AMDMonitor/issues">Issues</a></p>
+</footer>
+
+</body>
+</html>
