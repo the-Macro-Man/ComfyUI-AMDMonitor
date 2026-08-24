@@ -227,8 +227,9 @@ def _run_end(record):
     try:
         path = os.path.join(_base_dir(), "runs.csv")
         cols = ["when", "duration_s", "result", "model", "loras", "size", "steps",
-                "sampler", "seed", "peak_vram_gb", "peak_ram_gb", "error", "outputs",
-                "log_file"]
+                "cfg", "sampler", "seed", "peak_vram_gb", "peak_ram_gb",
+                "load_state", "sec_per_step", "slowest_node", "node_times",
+                "error", "outputs", "log_file"]
         new = not os.path.exists(path)
         with open(path, "a", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")

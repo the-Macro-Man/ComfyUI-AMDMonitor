@@ -49,7 +49,10 @@ const DEFAULTS = {
   warnVram: true,
   warnPartial: true,
   saveToDisk: true,
+  autoHideAlerts: true,
+  showNodeTimes: true,
   warnAt: 92,
+  alertHideSec: 10,
 };
 
 const load = (k, d) => {
@@ -137,6 +140,24 @@ function sparkline(samples, w) {
  * Pull the interesting settings out of the prompt ComfyUI is executing, so a
  * history entry can answer "what made this?" rather than just "3:03".
  */
+/*
+ * Resolve a value that may be a link. In API format an input is either a literal
+ * or ["<node id>", <slot>]. Following one hop covers the common case of width
+ * and height coming from a ResolutionMaster or a primitive; anything deeper is
+ * reported as unknown rather than printed as a link tuple -- stringifying
+ * ["96",0] is what produced the nonsensical "96,0x96,1" in the history.
+ */
+function linkNum(dict, v, want) {
+  if (typeof v === "number") return v;
+  if (Array.isArray(v) && v.length) {
+    const n = (dict || {})[v[0]];
+    const i = n?.inputs || {};
+    if (typeof i[want] === "number") return i[want];
+    if (typeof i.value === "number") return i.value;
+  }
+  return null;
+}
+
 function summarise(promptDict) {
   const out = { models: [], loras: [], sampler: "", steps: "", cfg: "", seed: "",
                 size: "", prompt: "", negative: "" };
@@ -158,10 +179,17 @@ function summarise(promptDict) {
       if (i.sampler_name) out.sampler = i.sampler_name;
     }
     if (ct === "KSamplerSelect" && i.sampler_name) out.sampler = i.sampler_name;
+    // custom-sampler graphs keep steps on the scheduler, not the sampler
+    if (/Scheduler$/.test(ct) && typeof i.steps === "number") out.steps = i.steps;
+    if (out.cfg === "" && typeof i.cfg === "number") out.cfg = i.cfg;
+    if (out.cfg === "" && typeof i.video_cfg === "number") out.cfg = i.video_cfg;
     if (/RandomNoise/.test(ct) && i.noise_seed != null && out.seed === "")
       out.seed = i.noise_seed;
-    if (/EmptyLatent|EmptySD3|EmptyLTXV/i.test(ct) && i.width && i.height)
-      out.size = `${i.width}x${i.height}`;
+    if (/EmptyLatent|EmptySD3|EmptyLTXV/i.test(ct)) {
+      const w = linkNum(promptDict, i.width, "width");
+      const h = linkNum(promptDict, i.height, "height");
+      if (w && h) out.size = `${w}x${h}`;
+    }
     if (/CLIPTextEncode|TextEncode/i.test(ct) && typeof i.text === "string")
       texts.push(i.text);
   }
@@ -278,7 +306,18 @@ app.registerExtension({
       #amdm-modal tr.row:hover td { background:#ffffff08; }
       #amdm-modal .amdm-detail td { font-size:11px; opacity:.85; background:#ffffff05; }
       #amdm-modal .amdm-detail div { padding:2px 0; }
-      #amdm-modal .amdm-detail .k { display:inline-block; min-width:78px; opacity:.5; }
+      #amdm-modal .amdm-detail .k { display:inline-block; min-width:78px; opacity:.5;
+                                    vertical-align:top; }
+      #amdm-modal .amdm-nt { margin-top:6px; padding-top:6px; border-top:1px solid #27272a; }
+      #amdm-modal .amdm-ntrow { display:flex; align-items:center; gap:8px; padding:1px 0;
+                                margin-left:78px; }
+      #amdm-modal .amdm-ntname { flex:0 0 42%; white-space:nowrap; overflow:hidden;
+                                 text-overflow:ellipsis; }
+      #amdm-modal .amdm-ntbar { flex:1; height:5px; background:#3f3f46; border-radius:3px;
+                                overflow:hidden; }
+      #amdm-modal .amdm-ntbar i { display:block; height:100%; background:#52c41a; }
+      #amdm-modal .amdm-ntval { flex:0 0 78px; text-align:right; opacity:.7;
+                                font-variant-numeric:tabular-nums; }
       #amdm-modal .amdm-path { font-size:10.5px; opacity:.45; margin-top:10px;
                                word-break:break-all; }
     `;
@@ -296,12 +335,14 @@ app.registerExtension({
       ["Run", [
         ["showProgress", "Progress + ETA"], ["showNode", "Current node"],
         ["showQueue", "Queue depth"], ["showTimer", "Run timer"],
+        ["showNodeTimes", "Time-by-node breakdown"],
         ["saveToDisk", "Save runs and logs to disk"],
       ]],
       ["Alerts", [
         ["notifyDone", "Notify on finish"], ["notifyError", "Notify on error"],
         ["soundDone", "Sound"], ["warnVram", "Warn at high VRAM"],
         ["warnPartial", "Warn on partial model load"],
+        ["autoHideAlerts", `Auto-hide alerts after ${DEFAULTS.alertHideSec}s`],
       ]],
     ];
 
@@ -347,6 +388,11 @@ app.registerExtension({
         <button title="Dismiss">&times;</button>`;
       card.querySelector("button").onclick = () => card.remove();
       stickyEl.appendChild(card);
+      // The card is only one of three surfaces -- the panel banner, the Alerts
+      // tab and alerts.log all keep the record -- so hiding it loses nothing.
+      if (cfg.autoHideAlerts) {
+        setTimeout(() => card.remove(), Math.max(2, cfg.alertHideSec) * 1000);
+      }
     }
 
     function pushAlert(title, message) {
@@ -444,12 +490,25 @@ app.registerExtension({
         </tr>
         <tr class="amdm-detail" data-d="${idx}" style="display:none"><td colspan="5">
           ${[["Model", h.model], ["LoRAs", h.loras], ["Size", h.size],
-             ["Sampler", h.sampler], ["Steps", h.steps], ["Seed", h.seed],
+             ["Sampler", h.sampler], ["Steps", h.steps], ["CFG", h.cfg],
+             ["Seed", h.seed], ["Load", h.load],
+             ["Sec / step", h.sps ? h.sps + " s" : ""],
              ["Peak RAM", h.peakRam ? fmtGB(h.peakRam) + " GB" : ""],
              ["Outputs", h.outputs], ["Log", h.log_file],
              ["Error", h.error], ["Prompt", h.prompt]]
             .filter(([, v]) => v !== undefined && v !== null && v !== "")
             .map(([k, v]) => `<div><span class="k">${k}</span>${esc(v)}</div>`).join("")}
+          ${cfg.showNodeTimes && (h.nodes || []).length ? `
+            <div class="amdm-nt"><span class="k">Time by node</span>
+              ${h.nodes.map((t) => {
+                  const pc = h.dur ? (t.ms / h.dur) * 100 : 0;
+                  return `<div class="amdm-ntrow">
+                    <span class="amdm-ntname">${esc(t.label)}${t.n > 1 ? ` x${t.n}` : ""}</span>
+                    <span class="amdm-ntbar"><i style="width:${Math.min(pc, 100).toFixed(1)}%"></i></span>
+                    <span class="amdm-ntval">${dur(t.ms)}  ${pc.toFixed(0)}%</span>
+                  </div>`;
+                }).join("")}
+            </div>` : ""}
         </td></tr>`).join("")
         : `<tr><td colspan="5" style="opacity:.5;padding:14px 6px">
              No runs recorded yet.</td></tr>`;
@@ -582,6 +641,9 @@ app.registerExtension({
     let progress = null, curNode = null, queue = 0;
     let nodeNames = {}, meta = null, outputs = [], runErr = "", logFile = "";
     let conn = "ok", fails = 0;
+    // per-node timing, measured from ComfyUI's own `executing` transitions
+    let nodeTimes = [], nodeStart = null, lastNode = null;
+    let stepTimes = [], lastStep = null, loadInfo = "";
 
     /* ── drag / resize ────────────────────────────────────────────────── */
 
@@ -670,6 +732,15 @@ app.registerExtension({
         logCarry = lines.pop() || "";
 
         for (const line of lines) {
+          // Record how the model actually loaded. Only the log knows this, and
+          // it is the single most useful fact when a run is slow or dies.
+          const lm = line.match(
+            /loaded (completely|partially);\s*(?:([\d.]+) MB usable, )?([\d.]+) MB loaded(?:, ([\d.]+) MB offloaded)?/);
+          if (lm && parseFloat(lm[3]) > 1000) {
+            loadInfo = lm[1] === "partially"
+              ? `partially - ${(+lm[3] / 1024).toFixed(1)} GB resident, ${(+lm[4] / 1024).toFixed(1)} GB offloaded`
+              : `completely - ${(+lm[3] / 1024).toFixed(1)} GB resident`;
+          }
           for (const [re, title, msg] of PATTERNS) {
             if (!re.test(line)) continue;
             const key = line.trim().slice(0, 120);
@@ -693,6 +764,17 @@ app.registerExtension({
       running = true; runStart = Date.now(); warned = false;
       peak = {}; peakRam = 0; spark = []; progress = null; curNode = null;
       meta = null; outputs = []; runErr = ""; logFile = "";
+      nodeTimes = []; nodeStart = null; lastNode = null;
+      stepTimes = []; lastStep = null; loadInfo = "";
+
+      // A new run supersedes the previous banner. Safe because `warned` re-arms
+      // above: a condition that still applies re-announces itself within seconds.
+      if (alerts.some((a) => !a.ack)) {
+        alerts.forEach((a) => (a.ack = true));
+        save(LS_ALERTS, alerts);
+        renderLastAlert();
+      }
+      document.querySelectorAll("#amdm-sticky .amdm-crit").forEach((c) => c.remove());
       loadPrompt();
       if (cfg.saveToDisk) {
         api.fetchApi("/amdmonitor/run/start", {
@@ -706,18 +788,26 @@ app.registerExtension({
     const onEnd = (ok, msg) => {
       if (!running) return;
       running = false;
+      closeNode();                       // attribute the final node's time
       lastRun = Date.now() - runStart;
       progress = null; curNode = null;
       if (!ok) runErr = msg || "see the ComfyUI log";
       const pk = Object.values(peak).length ? Math.max(...Object.values(peak)) : 0;
+
+      const times = nodeTimes.slice().sort((a, b) => b.ms - a.ms);
+      const sps = stepTimes.length
+        ? stepTimes.slice().sort((a, b) => a - b)[Math.floor(stepTimes.length / 2)]
+        : null;                          // median, so one stall doesn't skew it
 
       const rec = {
         at: Date.now(), dur: lastRun, peak: pk, peakRam,
         result: ok ? "ok" : "failed", error: runErr,
         model: (meta?.models || []).join(", "), loras: (meta?.loras || []).join(", "),
         size: meta?.size || "", steps: meta?.steps ?? "", sampler: meta?.sampler || "",
-        seed: meta?.seed ?? "", prompt: meta?.prompt || "",
+        cfg: meta?.cfg ?? "", seed: meta?.seed ?? "", prompt: meta?.prompt || "",
         outputs: outputs.join(", "), log_file: logFile,
+        nodes: times.slice(0, 12), load: loadInfo,
+        sps: sps != null ? +sps.toFixed(2) : "",
       };
       history.unshift(rec);
       history = history.slice(0, HIST_N);
@@ -735,6 +825,9 @@ app.registerExtension({
             peak_ram_gb: peakRam ? +(peakRam / GB).toFixed(2) : "",
             error: rec.error, outputs: rec.outputs, log_file: rec.log_file,
             prompt: rec.prompt, negative: meta?.negative || "",
+            cfg: rec.cfg, load_state: rec.load, sec_per_step: rec.sps,
+            slowest_node: times[0] ? `${times[0].label} ${dur(times[0].ms)}` : "",
+            node_times: times.map((t) => `${t.label}=${(t.ms / 1000).toFixed(1)}s`).join("; "),
           }),
         }).catch(() => {});
       }
@@ -770,9 +863,27 @@ app.registerExtension({
     api.addEventListener("execution_interrupted", () => {
       running = false; progress = null; curNode = null; render();
     });
+    /*
+     * Per-node timing. ComfyUI fires `executing` on every transition, and again
+     * with node=null when the graph finishes, so the gap between events is
+     * exactly how long the previous node took. Measured, never inferred from
+     * log text -- timings are the one thing that has to be trustworthy.
+     */
+    const closeNode = () => {
+      if (lastNode == null || nodeStart == null) return;
+      const ms = Date.now() - nodeStart;
+      const label = nodeLabel(lastNode);
+      const prev = nodeTimes.find((t) => t.label === label);
+      if (prev) { prev.ms += ms; prev.n += 1; }     // some nodes run more than once
+      else nodeTimes.push({ label, ms, n: 1 });
+      lastNode = null; nodeStart = null;
+    };
+
     api.addEventListener("executing", (e) => {
       const n = e?.detail?.node ?? e?.detail;
       if (n != null) { onStart(); if (!nodeNames[String(n)]) loadPrompt(); }
+      closeNode();
+      if (n != null) { lastNode = n; nodeStart = Date.now(); }
       curNode = n == null ? null : nodeLabel(n);
     });
     api.addEventListener("executed", (e) => {
@@ -784,8 +895,15 @@ app.registerExtension({
     });
     api.addEventListener("progress", (e) => {
       const d = e?.detail || {};
-      if (typeof d.value === "number" && typeof d.max === "number" && d.max > 0)
+      if (typeof d.value === "number" && typeof d.max === "number" && d.max > 0) {
+        // seconds per step, measured between progress events rather than parsed
+        // out of tqdm's output
+        const now = Date.now();
+        if (lastStep && d.value > lastStep.value)
+          stepTimes.push((now - lastStep.t) / 1000 / (d.value - lastStep.value));
+        lastStep = d.value >= d.max ? null : { t: now, value: d.value };
         progress = { value: d.value, max: d.max };
+      }
     });
     api.addEventListener("status", (e) => {
       queue = e?.detail?.exec_info?.queue_remaining ?? 0;

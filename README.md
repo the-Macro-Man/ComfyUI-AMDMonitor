@@ -51,8 +51,12 @@ No custom nodes. Nothing to install beyond the extension itself.
 - **Progress + ETA** — step *k of n* with a live estimate of time remaining
 - **Current node** — the executing node's real name, read from the running prompt
 - **Queue depth** and **run timer**
-- **Run history** — model, LoRAs, size, sampler, steps, seed, outputs, errors and peak
-  usage for every run. Expandable rows, CSV export, and written to disk as well
+- **Time by node** — a measured breakdown of where a run's time actually went, so a
+  slow generation points at its own bottleneck
+- **Seconds per step** — median, so one stall doesn't skew it
+- **Run history** — model, LoRAs, size, sampler, steps, CFG, seed, outputs, errors, how
+  the model loaded, and peak usage for every run. Expandable rows, CSV export, and
+  written to disk as well
 
 **Alerts**
 
@@ -151,9 +155,27 @@ fired and when — the explanation outlives the crash.
 
 The **H** button turns red while an alert is unread. Open it for the full list.
 
-Alerts stand down on their own once a run **succeeds** — whatever they were warning about
-has evidently been dealt with. They stay in the Alerts tab as a record; only the banner
-clears. Dismiss manually with the **×** at any time.
+Alerts stand down on their own when the **next run starts** — whatever they were warning
+about has either been dealt with or will re-announce itself within seconds, because the
+VRAM check re-arms every run. They stay in the Alerts tab as a record; only the banner
+clears. The card itself auto-hides after 10 seconds; untick **Auto-hide alerts** to keep
+it until dismissed.
+
+## Where did the time go?
+
+Every run records a measured breakdown, taken from ComfyUI's own node-transition events
+rather than inferred from log text:
+
+```
+SamplerCustomAdvanced       6:58   89%
+RemoteTextEncoderSwitch      28s    6%
+UNETLoader                   11s    2%
+VAEDecode                     8s    2%
+```
+
+Click any row in **H → Runs** to see it. Nodes that execute more than once are summed and
+marked `x2`. Seconds-per-step is reported as a **median**, so a single stall doesn't
+distort the figure.
 
 On Windows the desktop toast is labelled with the host application ("electron.app.Comfy
 Desktop") and uses its icon, which the Web Notification API cannot override. The in-page
@@ -168,8 +190,8 @@ panel stays compact. Every row is independently switchable.
 |---|---|
 | **Display** | GPU bars · Hide integrated GPU · VRAM graph · Peak VRAM · System RAM |
 | **System** | Swap · CPU · Output disk free · Disk / network rates |
-| **Run** | Progress + ETA · Current node · Queue depth · Run timer · Save runs and logs to disk |
-| **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load |
+| **Run** | Progress + ETA · Current node · Queue depth · Run timer · Time-by-node breakdown · Save runs and logs to disk |
+| **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load · Auto-hide alerts |
 
 **H** in the header opens run history and alerts. It turns red when there is an unread
 alert. In the gear panel: **Reset Peak** clears the high-water mark and graph,
