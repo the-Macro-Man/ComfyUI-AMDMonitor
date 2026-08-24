@@ -613,7 +613,11 @@ app.registerExtension({
       try {
         const r = await api.fetchApi("/amdmonitor/ai/analyse", {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ base: AI.base, model: AI.model, prompt: ask }),
+          // sys is the live /system_stats payload -- the backend builds the
+          // hardware section of the system prompt from it, so the advice suits
+          // whatever machine this actually is
+          body: JSON.stringify({ base: AI.base, model: AI.model, prompt: ask,
+                                 machine: sys }),
         });
         const j = await r.json();
         if (j.error) { into.innerHTML = `<span class="amdm-warn">${esc(j.error)}</span>`; return; }

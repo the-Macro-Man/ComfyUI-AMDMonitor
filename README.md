@@ -204,9 +204,10 @@ button, and failed runs get **Explain with AI**.
 from the extension; the model only reasons about them. Its output is labelled as
 interpretation and shown next to the real figures, so an invented number is obvious.
 
-It is also told what your hardware actually does — that a partial load on ROCm tends to
-abort, that `--highvram` on an oversized model is slow rather than fixed, that
-seconds-per-step is not comparable across models. So it gives specific advice rather than
+It is also told about **your** machine — GPU name and VRAM, system RAM, whether PyTorch is
+a ROCm or CUDA build, the OS, and the ComfyUI launch flags actually in use. That section
+is generated live, so an NVIDIA user is never told about ROCm behaviour and nobody is
+advised about a flag they aren't running. The result is specific advice rather than
 "consider upgrading your GPU".
 
 ### What gets sent

@@ -50,26 +50,67 @@ __all__ = ["WEB_DIRECTORY", "NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
 KEEP_RUNS = 50          # prune older run files beyond this
 log = logging.getLogger("AMDMonitor")
 
-# Everything the model is told about this machine. Without it a small local model
-# gives generic advice; with it, it can reason about the actual constraints.
+# Universal rules only. Anything hardware-specific is generated per machine by
+# _machine_facts() below -- baking one person's GPU into a published extension
+# would hand every other user advice premised on a machine they do not own.
 SYSTEM_PROMPT = """You analyse ComfyUI generation telemetry.
 
-Facts you may rely on:
-- ComfyUI reserves several GB of VRAM for activations, so the practical weight
-  budget is well below the card's total. `usable` in its logs is that budget.
-- "loaded partially" means weights were offloaded to system RAM. On AMD/ROCm this
-  frequently ends in "Fatal Python error: Aborted" with no traceback.
-- `--highvram` on an oversized model reports "loaded completely" but streams from
-  system RAM and is dramatically slower. It is not a fix.
+General principles:
+- ComfyUI reserves VRAM for activations, so the practical weight budget is below
+  the card's total. `usable` in its logs is that budget, not free memory.
+- "loaded partially" means weights were offloaded to system RAM, which is far
+  slower than VRAM.
 - Sampler time dominating with flat VRAM means compute-bound; resolution is the
-  lever. VRAM at 100% with heavy swap means memory-bound.
+  lever. VRAM pinned at maximum with heavy swap means memory-bound.
 
 Rules:
 - The numbers given to you are measured. Never invent or recompute them.
 - Never compare seconds-per-step across different models; they are not comparable.
 - Do not infer a trend from fewer than three runs of the same model. Say so instead.
 - If settings differ between runs being compared, say which.
+- Only comment on launch flags, GPU vendor or driver behaviour if they appear in
+  the MACHINE section. Never assume a vendor or a flag that is not listed there.
 Answer in at most 150 words. Be concrete. Lead with the single most useful point."""
+
+
+def _machine_facts(info):
+    """
+    Describe the machine this is actually running on, from live data. An NVIDIA
+    user must not be told about ROCm aborts, and nobody should be told about a
+    flag they are not using.
+    """
+    import sys as _sys
+    L, sysinfo = [], (info or {}).get("system") or {}
+
+    for d in (info or {}).get("devices") or []:
+        gb = (d.get("vram_total") or 0) / 1024 ** 3
+        if gb > 0:
+            L.append(f"- GPU: {d.get('name', '?')} with {gb:.1f} GB VRAM")
+    if sysinfo.get("ram_total"):
+        L.append(f"- System RAM: {sysinfo['ram_total'] / 1024 ** 3:.0f} GB")
+
+    torch_v = str(sysinfo.get("pytorch_version") or "")
+    rocm = "rocm" in torch_v.lower() or "hip" in torch_v.lower()
+    cuda = "+cu" in torch_v.lower()
+    if torch_v:
+        vendor = "AMD / ROCm" if rocm else "NVIDIA / CUDA" if cuda else "unknown backend"
+        L.append(f"- PyTorch {torch_v} ({vendor})")
+    if sysinfo.get("os"):
+        L.append(f"- OS: {sysinfo['os']}")
+
+    # Launch flags, without the paths that follow them.
+    flags = [a for a in _sys.argv[1:] if a.startswith("--")]
+    if flags:
+        L.append("- ComfyUI launch flags: " + " ".join(sorted(set(flags))))
+
+    if rocm:
+        L.append("- On this ROCm setup a model that only loads partially is often "
+                 "followed by 'Fatal Python error: Aborted' with no traceback.")
+    if "--highvram" in flags:
+        L.append("- --highvram is set: an oversized model may report 'loaded "
+                 "completely' while streaming from system RAM, which is very slow.")
+
+    return "MACHINE:\n" + "\n".join(L) if L else ""
 
 
 def _cfg_path():
@@ -454,8 +495,10 @@ try:
         if not model:
             return web.json_response({"error": "No model selected."})
         user = body.get("prompt") or ""
+        machine = _machine_facts(body.get("machine"))
+        system = SYSTEM_PROMPT + ("\n\n" + machine if machine else "")
         payload = {"model": model, "temperature": 0.2, "stream": False,
-                   "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                   "messages": [{"role": "system", "content": system},
                                 {"role": "user", "content": user}]}
         data, err = await _provider(body, "/chat/completions", "POST", payload)
         if err:
