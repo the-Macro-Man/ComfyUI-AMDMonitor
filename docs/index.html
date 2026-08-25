@@ -108,7 +108,7 @@ footer{padding:40px 0 60px;text-align:center;color:var(--faint);font-size:13px;
      can never show you.</p>
   <div class="badges">
     <span class="on">MIT</span><span class="on">No extra installs</span>
-    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span>v1.5.2</span>
+    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span id="ver">v…</span>
   </div>
   <div class="cta">
     <a class="btn p" href="#install">Install</a>
@@ -318,5 +318,17 @@ git clone https://github.com/the-Macro-Man/ComfyUI-AMDMonitor</code></pre>
   <a href="https://github.com/the-Macro-Man/ComfyUI-AMDMonitor/issues">Issues</a></p>
 </footer>
 
+<script>
+/* The version badge is read from the repository's pyproject.toml so it can never
+   drift out of step with a release. Hardcoding it here meant it was already
+   stale by two versions. */
+fetch("https://raw.githubusercontent.com/the-Macro-Man/ComfyUI-AMDMonitor/main/pyproject.toml")
+  .then(r => r.text())
+  .then(t => {
+    const m = t.match(/^version\s*=\s*"([^"]+)"/m);
+    if (m) document.getElementById("ver").textContent = "v" + m[1];
+  })
+  .catch(() => { document.getElementById("ver").remove(); });
+</script>
 </body>
 </html>

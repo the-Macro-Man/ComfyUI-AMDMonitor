@@ -250,10 +250,21 @@ ComfyUI Manager only flags updates for packs installed **from the registry**. If
 track the git repo — the "nightly" channel — nothing ever tells you a new version exists,
 and it's easy to sit on an old one for months.
 
-So the panel checks for itself: one `GET` to `raw.githubusercontent.com`, at most once a
-day, result cached. **Nothing about you is sent.** When a newer version exists, a small
-green badge appears next to the panel title showing the available version; click it for
-the repository. Turn it off with **Check for updates**.
+So the panel checks for itself: one `GET` to `raw.githubusercontent.com`, **at most once
+every 24 hours**, result cached in `user/amdmonitor/config.json`. **Nothing about you is
+sent.**
+
+You'll know in three places:
+
+- a green **`v1.6.1 available`** badge beside the panel title — click it for the repository
+- a one-off toast when ComfyUI loads
+- the settings window header, which always shows your installed version:
+  **AMD Monitor v1.6.1 settings**, with the update status and a **Check now** button
+  underneath that bypasses the daily cache
+
+Turn the network check off with **Check for updates** and the installed version is still
+shown — it's read from `pyproject.toml` at runtime, so it can't drift from what you
+actually have.
 
 ## Where did the time go?
 

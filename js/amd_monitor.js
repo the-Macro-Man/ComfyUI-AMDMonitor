@@ -402,6 +402,14 @@ app.registerExtension({
       #amdm-modal .amdm-ai-cfg h4 { margin:0 0 2px; font-size:11px; text-transform:uppercase;
         letter-spacing:.06em; opacity:.6; }
       #amdm-modal .amdm-hint { font-size:10.5px; opacity:.5; margin:0 0 8px; }
+      #amdm-modal .amdm-ver { display:flex; align-items:center; gap:10px; font-size:11px;
+        opacity:.7; margin:-4px 0 14px; padding-bottom:12px;
+        border-bottom:1px solid #27272a; }
+      #amdm-modal .amdm-ver button { all:unset; cursor:pointer; font-size:10px;
+        padding:2px 8px; border:1px solid #52525b; border-radius:4px; }
+      #amdm-modal .amdm-ver button:hover { border-color:#71717a; }
+      #amdm-modal .amdm-updline { color:#52c41a; opacity:1; }
+      #amdm-modal .amdm-updline a { color:#4c9aff; margin-left:6px; }
       #amdm-modal .amdm-f { display:flex; align-items:center; gap:10px; margin:5px 0;
         font-size:11.5px; }
       #amdm-modal .amdm-f > span:first-child { flex:0 0 74px; opacity:.6; }
@@ -584,6 +592,7 @@ app.registerExtension({
     /* ── optional AI analysis ─────────────────────────────────────────── */
 
     const AI = { base: "", model: "", has_key: false, env_key: false, models: [] };
+    const VER = { installed: "", latest: "", update: false, checked_at: 0, url: "" };
 
     const aiLoadConfig = () => api.fetchApi("/amdmonitor/ai/config")
       .then((r) => r.json()).then((j) => Object.assign(AI, j)).catch(() => {});
@@ -814,7 +823,18 @@ app.registerExtension({
       m.id = "amdm-modal";
       m.innerHTML = `
         <div class="amdm-card">
-          <h3>AMD Monitor settings</h3>
+          <h3>AMD Monitor${VER.installed ? ` <span style="font-weight:400;opacity:.5">v${
+            esc(VER.installed)}</span>` : ""} settings</h3>
+          <div class="amdm-ver">${
+            VER.update
+              ? `<span class="amdm-updline"><b>v${esc(VER.latest)} is available.</b>
+                   <a href="${esc(VER.url)}" target="_blank">Open the repository</a></span>`
+              : VER.latest
+                ? `Up to date${VER.checked_at ? " — last checked " +
+                    stamp(VER.checked_at * 1000) : ""}.`
+                : cfg.checkUpdates ? "Update status unknown." : "Update checks are off."}
+            <button class="amdm-vercheck">Check now</button>
+          </div>
           <div class="amdm-grid">
             ${SECTIONS.map(([n, items]) => `<div class="amdm-col">
                 <h4>${esc(n)}</h4>
@@ -861,6 +881,15 @@ app.registerExtension({
       document.body.appendChild(m);
       m.onclick = (e) => { if (e.target === m) m.remove(); };
       m.querySelector(".amdm-close").onclick = () => m.remove();
+
+      m.querySelector(".amdm-vercheck").onclick = async (e) => {
+        e.target.textContent = "Checking…";
+        const prev = cfg.checkUpdates;
+        cfg.checkUpdates = true;            // an explicit click is consent enough
+        await loadVersion(true);
+        cfg.checkUpdates = prev;
+        showSettings();                     // redraw with the fresh result
+      };
 
       const status = m.querySelector(".amdm-aistatus");
       const readForm = () => ({
@@ -1348,21 +1377,28 @@ app.registerExtension({
      * the registry, so anyone tracking the git repo never gets told -- which is
      * how you end up running something months old without noticing.
      */
-    if (cfg.checkUpdates) {
-      api.fetchApi("/amdmonitor/version").then((r) => r.json()).then((v) => {
-        if (!v.update) return;
-        const el = box.querySelector(".amdm-title");
-        el.innerHTML = `GPU / System <span class="amdm-upd"
-          title="Installed ${esc(v.installed)} — click to open the repository">v${
-          esc(v.latest)} available</span>`;
-        el.querySelector(".amdm-upd").onclick = (e) => {
-          e.stopPropagation(); window.open(v.url, "_blank");
-        };
-        toast(`AMD Monitor ${v.latest} is available (you have ${v.installed})`);
-      }).catch(() => {});
+    // Always fetch the installed version; only reach the network for the latest
+    // one when the toggle allows it.
+    function loadVersion(force) {
+      const q = cfg.checkUpdates ? (force ? "?force=1" : "") : "?check=0";
+      return api.fetchApi("/amdmonitor/version" + q).then((r) => r.json())
+        .then((v) => {
+          Object.assign(VER, v);
+          if (!v.update) return v;
+          const el = box.querySelector(".amdm-title");
+          el.innerHTML = `GPU / System <span class="amdm-upd"
+            title="Installed ${esc(v.installed)} — click to open the repository">v${
+            esc(v.latest)} available</span>`;
+          el.querySelector(".amdm-upd").onclick = (e) => {
+            e.stopPropagation(); window.open(v.url, "_blank");
+          };
+          if (!force) toast(`AMD Monitor ${v.latest} is available (you have ${v.installed})`);
+          return v;
+        }).catch(() => VER);
     }
 
     aiLoadConfig();
+    loadVersion(false);
     tick();
     setInterval(tick, cfg.pollMs);
     setInterval(() => { if (running || !logDead) pollLog(); }, cfg.logPollMs);

@@ -561,7 +561,14 @@ try:
         now = time.time()
         cached, when = c.get("latest", ""), c.get("latest_at", 0)
 
-        if not cached or now - when > 86400:          # at most once a day
+        # check=0 returns the installed version without touching the network,
+        # so the panel can always show it even with update checks turned off.
+        # force=1 ignores the daily cache, for the "Check now" button.
+        q = request.rel_url.query
+        offline = q.get("check") == "0"
+        force = q.get("force") == "1"
+
+        if not offline and (force or not cached or now - when > 86400):
             try:
                 to = aiohttp.ClientTimeout(total=8)
                 async with aiohttp.ClientSession(timeout=to) as s:
@@ -579,6 +586,7 @@ try:
         return web.json_response({
             "installed": installed, "latest": cached,
             "update": bool(installed and cached and _newer(cached, installed)),
+            "checked_at": c.get("latest_at", 0),
             "url": "https://github.com/the-Macro-Man/ComfyUI-AMDMonitor",
         })
 
