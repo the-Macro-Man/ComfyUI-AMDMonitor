@@ -250,9 +250,13 @@ ComfyUI Manager only flags updates for packs installed **from the registry**. If
 track the git repo — the "nightly" channel — nothing ever tells you a new version exists,
 and it's easy to sit on an old one for months.
 
-So the panel checks for itself: one `GET` to `raw.githubusercontent.com`, **at most once
-every 24 hours**, result cached in `user/amdmonitor/config.json`. **Nothing about you is
+So the panel checks for itself: one `GET` to `raw.githubusercontent.com`, **every 6 hours
+by default**, result cached in `user/amdmonitor/config.json`. **Nothing about you is
 sent.**
+
+It also re-checks on that same interval while ComfyUI stays open — otherwise a session
+left running for days would never notice a release, however short the cache window was.
+Change the interval with `updateCheckHours` in `js/amd_monitor.js` (minimum 15 minutes).
 
 You'll know in three places:
 
@@ -385,6 +389,7 @@ Edit `DEFAULTS` at the top of `js/amd_monitor.js`:
 | `logPollMs` | `1000` | log poll interval; faster because ComfyUI's buffer is small |
 | `warnAt` | `92` | percent VRAM that triggers red and the warning |
 | `alertHideSec` | `10` | how long a critical alert card stays before auto-hiding |
+| `updateCheckHours` | `6` | how often to look for a new release, minimum 0.25 |
 
 `KEEP_RUNS` in `__init__.py` (default `50`) sets how many runs are kept on disk.
 

@@ -567,8 +567,12 @@ try:
         q = request.rel_url.query
         offline = q.get("check") == "0"
         force = q.get("force") == "1"
+        try:                                  # caller decides how stale is stale
+            max_age = max(300, int(q.get("max_age", 21600)))
+        except ValueError:
+            max_age = 21600
 
-        if not offline and (force or not cached or now - when > 86400):
+        if not offline and (force or not cached or now - when > max_age):
             try:
                 to = aiohttp.ClientTimeout(total=8)
                 async with aiohttp.ClientSession(timeout=to) as s:

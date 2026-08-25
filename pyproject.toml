@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-amdmonitor"
 description = "VRAM monitor and run notifications for AMD / ROCm GPUs in ComfyUI, where NVML-based monitors show nothing. This extension shows VRAM, peak usage, and tells you when your render finishes. Features - VRAM per GPU, Peak VRAM per run, Finish notifications, Failure alerts, Offload warning, Run timer, Everything toggleable, Draggable, collapsible and remembers its position"
-version = "1.6.1"
+version = "1.6.2"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.9"

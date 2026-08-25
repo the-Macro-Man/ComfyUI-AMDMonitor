@@ -52,6 +52,7 @@ const DEFAULTS = {
   autoHideAlerts: true,
   aiSendPrompt: false,
   checkUpdates: true,
+  updateCheckHours: 6,
   showNodeTimes: true,
   warnAt: 92,
   alertHideSec: 10,
@@ -1380,7 +1381,9 @@ app.registerExtension({
     // Always fetch the installed version; only reach the network for the latest
     // one when the toggle allows it.
     function loadVersion(force) {
-      const q = cfg.checkUpdates ? (force ? "?force=1" : "") : "?check=0";
+      const age = Math.max(0.25, +cfg.updateCheckHours || 6) * 3600;
+      const q = !cfg.checkUpdates ? "?check=0"
+              : force ? "?force=1" : `?max_age=${Math.round(age)}`;
       return api.fetchApi("/amdmonitor/version" + q).then((r) => r.json())
         .then((v) => {
           Object.assign(VER, v);
@@ -1399,6 +1402,10 @@ app.registerExtension({
 
     aiLoadConfig();
     loadVersion(false);
+    // The check otherwise only ever runs at page load, so a long-lived ComfyUI
+    // session would never see a new release however short the cache window is.
+    setInterval(() => { if (cfg.checkUpdates) loadVersion(false); },
+                Math.max(0.25, +cfg.updateCheckHours || 6) * 3600 * 1000);
     tick();
     setInterval(tick, cfg.pollMs);
     setInterval(() => { if (running || !logDead) pollLog(); }, cfg.logPollMs);
