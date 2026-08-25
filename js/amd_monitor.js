@@ -51,6 +51,7 @@ const DEFAULTS = {
   saveToDisk: true,
   autoHideAlerts: true,
   aiSendPrompt: false,
+  checkUpdates: true,
   showNodeTimes: true,
   warnAt: 92,
   alertHideSec: 10,
@@ -221,6 +222,16 @@ function explainError(err, rec) {
       "no cap." };
   }
 
+  m = e.match(/not reachable at (https?:\/\/[^\s(]+)/i);
+  if (m || /backend unavailable|ConnectTimeout|ConnectionError/i.test(e)) {
+    const url = m ? m[1] : "the configured address";
+    return { title: "Remote text encoder isn't answering", body:
+      `Nothing is listening at <code>${esc(url)}</code>. The encoder service is ` +
+      "usually not running — it does not start automatically after a reboot. " +
+      "Start it on that machine, or switch the node's backend to <b>Auto</b> so it " +
+      "falls back instead of failing." };
+  }
+
   if (/No such file or directory|not in list|Value not in list/i.test(e)) {
     return { title: "A file or option the workflow expects is missing", body:
       "A model, LoRA or VAE named in the workflow isn't present, or a dropdown " +
@@ -300,6 +311,9 @@ app.registerExtension({
         !important; border-radius:3px; padding:1px 4px !important; }
       .amdm-head .amdm-history.hot { border-color:#ff4d4f !important; color:#ff4d4f;
                                      opacity:1; }
+      .amdm-upd { font-size:9.5px; font-weight:700; color:#0a0a0a;
+        background:#52c41a; padding:1px 6px; border-radius:999px;
+        margin-left:6px; cursor:pointer; vertical-align:middle; }
       .amdm-conn { margin:-2px 0 6px; font-size:10px; padding:3px 6px; border-radius:4px; }
       .amdm-conn.warn { color:#faad14; background:#faad1418; }
       .amdm-conn.bad  { color:#ff4d4f; background:#ff4d4f18; }
@@ -437,6 +451,7 @@ app.registerExtension({
         ["soundDone", "Sound"], ["warnVram", "Warn at high VRAM"],
         ["warnPartial", "Warn on partial model load"],
         ["autoHideAlerts", `Auto-hide alerts after ${DEFAULTS.alertHideSec}s`],
+        ["checkUpdates", "Check for updates"],
       ]],
     ];
 
@@ -601,15 +616,41 @@ app.registerExtension({
       // same-model peers only: seconds-per-step is meaningless across models
       const peers = history.filter((x) => x.model === h.model && x.result === "ok")
                            .slice(0, 6).map(runFacts);
-      const ask = kind === "explain"
-        ? `This ComfyUI run failed. Explain the cause in plain language and give the fix.\n\n`
-          + JSON.stringify(runFacts(h), null, 1)
-        : `Analyse this run. Where did the time go, and is it memory- or compute-bound?\n\n`
-          + `THIS RUN:\n${JSON.stringify(runFacts(h), null, 1)}\n\n`
-          + (peers.length > 1
-              ? `PREVIOUS SUCCESSFUL RUNS OF THE SAME MODEL (${peers.length}):\n`
-                + JSON.stringify(peers, null, 1)
-              : `No other successful runs of this model are recorded, so do not infer trends.`);
+      let ask;
+      if (kind === "explain") {
+        ask = "This ComfyUI run failed. Explain the cause in plain language and give "
+            + "the fix.\n\n" + JSON.stringify(runFacts(h), null, 1);
+      } else if (kind === "compare") {
+        // the immediately previous successful run of the SAME model
+        const prev = peers.find((p) => p.duration_s !== runFacts(h).duration_s) || peers[0];
+        ask = "Compare these two runs of the same model. State what changed, what it "
+            + "cost, and whether the difference is explained by the settings.\n\n"
+            + `THIS RUN:\n${JSON.stringify(runFacts(h), null, 1)}\n\n`
+            + `PREVIOUS RUN:\n${JSON.stringify(prev, null, 1)}`;
+      } else if (kind === "session") {
+        // grouped per model: seconds-per-step is not comparable across models
+        const groups = {};
+        for (const r of history) {
+          if (r.result !== "ok") continue;
+          (groups[r.model || "unknown"] ||= []).push(runFacts(r));
+        }
+        ask = "Summarise this session. Report per model, never mixing them. Point out "
+            + "anything actionable.\n\n"
+            + Object.entries(groups).map(([k, v]) =>
+                `MODEL ${k} (${v.length} run${v.length > 1 ? "s" : ""}):\n`
+                + JSON.stringify(v.slice(0, 8), null, 1)).join("\n\n")
+            + `\n\n(${history.filter((r) => r.result !== "ok").length} failed run(s) `
+            + "excluded from these figures.)";
+      } else {
+        ask = "Analyse this run. Where did the time go, and is it memory- or "
+            + "compute-bound?\n\n"
+            + `THIS RUN:\n${JSON.stringify(runFacts(h), null, 1)}\n\n`
+            + (peers.length > 1
+                ? `PREVIOUS SUCCESSFUL RUNS OF THE SAME MODEL (${peers.length}):\n`
+                  + JSON.stringify(peers, null, 1)
+                : "No other successful runs of this model are recorded, so do not "
+                  + "infer trends.");
+      }
       try {
         const r = await api.fetchApi("/amdmonitor/ai/analyse", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -617,7 +658,10 @@ app.registerExtension({
           // hardware section of the system prompt from it, so the advice suits
           // whatever machine this actually is
           body: JSON.stringify({ base: AI.base, model: AI.model, prompt: ask,
-                                 machine: sys }),
+                                 machine: sys,
+                                 // the backend appends this run's log tail, which
+                                 // is where the cause of an unfamiliar error lives
+                                 log_file: kind === "explain" ? h.log_file : null }),
         });
         const j = await r.json();
         if (j.error) { into.innerHTML = `<span class="amdm-warn">${esc(j.error)}</span>`; return; }
@@ -671,8 +715,10 @@ app.registerExtension({
             return x ? `<div class="amdm-exp"><b>${x.title}</b>${x.body}</div>` : ""; })()}
           <div class="amdm-btns amdm-aibtns" data-r="${idx}">
             ${h.result !== "ok"
-              ? `<button data-ai="explain" data-i="${idx}">Explain with AI</button>`
-              : `<button data-ai="analyse" data-i="${idx}">Analyse with AI</button>`}
+              ? `<button data-ai="explain" data-i="${idx}">Explain this failure</button>`
+              : `<button data-ai="analyse" data-i="${idx}">Analyse this run</button>`}
+            ${history.some((x, j) => j !== idx && x.model === h.model && x.result === "ok")
+              ? `<button data-ai="compare" data-i="${idx}">Compare with previous</button>` : ""}
           </div>
           <div class="amdm-aiout" data-o="${idx}">${
             h.analysis ? `<div class="amdm-ai">${esc(h.analysis).replace(/\n/g, "<br>")}</div>` : ""}</div>
@@ -700,7 +746,10 @@ app.registerExtension({
               Click a row for full details.</div>`
           : `<table><thead><tr><th>When</th><th>Alert</th><th>Detail</th></tr></thead>
              <tbody>${alertRows}</tbody></table>`}
+          <div class="amdm-aiout" data-o="session"></div>
           <div class="amdm-btns">
+            ${tab === "runs" && history.length
+              ? `<button class="amdm-session">Session summary</button>` : ""}
             <button class="amdm-csv">Export CSV</button>
             <button class="amdm-clear">Clear ${tab}</button>
             <button class="amdm-close">Close</button>
@@ -718,6 +767,9 @@ app.registerExtension({
         const d = m.querySelector(`tr.amdm-detail[data-d="${tr.dataset.i}"]`);
         if (d) d.style.display = d.style.display === "none" ? "" : "none";
       }));
+      const sessBtn = m.querySelector(".amdm-session");
+      if (sessBtn) sessBtn.onclick = () =>
+        aiAsk("session", history[0], m.querySelector('.amdm-aiout[data-o="session"]'));
       m.querySelectorAll("button[data-ai]").forEach((b) => (b.onclick = (ev) => {
         ev.stopPropagation();
         const i = +b.dataset.i;
@@ -1290,6 +1342,25 @@ app.registerExtension({
 
     api.fetchApi("/amdmonitor/runs").then((r) => r.json())
       .then((j) => { dataDir = j.dir || ""; }).catch(() => {});
+
+    /*
+     * Update check. ComfyUI Manager only flags updates for packs installed from
+     * the registry, so anyone tracking the git repo never gets told -- which is
+     * how you end up running something months old without noticing.
+     */
+    if (cfg.checkUpdates) {
+      api.fetchApi("/amdmonitor/version").then((r) => r.json()).then((v) => {
+        if (!v.update) return;
+        const el = box.querySelector(".amdm-title");
+        el.innerHTML = `GPU / System <span class="amdm-upd"
+          title="Installed ${esc(v.installed)} — click to open the repository">v${
+          esc(v.latest)} available</span>`;
+        el.querySelector(".amdm-upd").onclick = (e) => {
+          e.stopPropagation(); window.open(v.url, "_blank");
+        };
+        toast(`AMD Monitor ${v.latest} is available (you have ${v.installed})`);
+      }).catch(() => {});
+    }
 
     aiLoadConfig();
     tick();

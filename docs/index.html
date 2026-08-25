@@ -108,7 +108,7 @@ footer{padding:40px 0 60px;text-align:center;color:var(--faint);font-size:13px;
      can never show you.</p>
   <div class="badges">
     <span class="on">MIT</span><span class="on">No extra installs</span>
-    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span>v1.5.0</span>
+    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span>v1.5.2</span>
   </div>
   <div class="cta">
     <a class="btn p" href="#install">Install</a>
@@ -282,12 +282,18 @@ git clone https://github.com/the-Macro-Man/ComfyUI-AMDMonitor</code></pre>
   <h3>AI run analysis <span class="soon" style="background:#52c41a">shipped v1.5.0</span></h3>
   <p>An optional layer over a local <b>Ollama</b> endpoint, or an API provider such as
      OpenRouter. It interprets the measurements — it never produces them:</p>
-  <ul>
-    <li><b>Analyse this run</b> — the bottleneck, and whether you are memory- or compute-bound</li>
-    <li><b>Compare with previous</b> — against the previous run <i>of the same model</i>, with differing settings called out</li>
-    <li><b>Session summary</b> — trends, grouped per model, never mixing them</li>
-    <li><b>Explain this failure</b> — the error plus the tail of that run's log</li>
-  </ul>
+  <p>Open <b>H → Runs</b> and expand any row:</p>
+  <table>
+    <tr><th>Button</th><th>Where</th><th>What it does</th></tr>
+    <tr><td>Analyse this run</td><td>expanded row, successful runs</td>
+        <td>where the time went, memory- or compute-bound</td></tr>
+    <tr><td>Explain this failure</td><td>expanded row, failed runs</td>
+        <td>the cause in plain language, and the fix</td></tr>
+    <tr><td>Compare with previous</td><td>expanded row, when another run of the same model exists</td>
+        <td>what changed and what it cost</td></tr>
+    <tr><td>Session summary</td><td>bottom of the Runs tab</td>
+        <td>trends, grouped per model, failures excluded</td></tr>
+  </table>
   <table>
     <tr><th>Provider</th><th>Endpoint</th><th>Key</th></tr>
     <tr><td>Ollama (local / LAN)</td><td><code>http://192.168.1.182:11434</code></td><td>none</td></tr>

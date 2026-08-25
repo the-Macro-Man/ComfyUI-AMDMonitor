@@ -197,8 +197,23 @@ Works with anything speaking the OpenAI-compatible API:
 | OpenAI | `https://api.openai.com/v1` | required |
 
 Set it up in **⚙ Settings → AI analysis**: paste an endpoint, press **Fetch** to list
-models, pick one, **Save**. Then each run in **H → Runs** gains an **Analyse with AI**
-button, and failed runs get **Explain with AI**.
+models, pick one, **Save**.
+
+Then in **H → Runs**, expand any row:
+
+| Button | Where | What it does |
+|---|---|---|
+| **Analyse this run** | expanded row, successful runs | where the time went, memory- or compute-bound |
+| **Explain this failure** | expanded row, failed runs | the cause in plain language, and the fix |
+| **Compare with previous** | expanded row, when another run of the same model exists | what changed and what it cost |
+| **Session summary** | bottom of the Runs tab | trends, grouped per model, failures excluded |
+
+Recognised errors also get a built-in explanation above these buttons — no AI needed.
+
+**The two layers cover different ground.** Built-in explanations handle seven known
+patterns instantly and offline. **Explain this failure** works on *any* error, including
+one nobody has seen before, because it sends the error together with the **last 60 lines
+of that run's ComfyUI log** — which is usually where the cause actually sits.
 
 **It interprets measurements, it never produces them.** Timings, VRAM and load state come
 from the extension; the model only reasons about them. Its output is labelled as
@@ -218,10 +233,27 @@ successful runs **of the same model**, for context.
 
 **Prompt text is excluded** unless you tick *Include prompt text*.
 
-A local endpoint keeps all of it on your own network. A remote provider does not — the
+**Explain this failure also sends the last 60 lines of that run's ComfyUI log.** That is
+where the cause of an unfamiliar error usually sits, but log lines can contain file paths,
+model paths and occasionally fragments of a prompt — *regardless of the Include prompt
+text setting*, since the log is captured verbatim. On a local endpoint this stays on your
+own machine. Be aware of it before pointing failure analysis at a remote provider.
+
+A local endpoint keeps everything on your own network. A remote provider does not — the
 setup panel says so plainly. The API key is stored server-side in
 `user/amdmonitor/config.json` and is never sent to the browser; set
 `AMDMONITOR_API_KEY` instead if you'd rather it never touched disk.
+
+## Update checks
+
+ComfyUI Manager only flags updates for packs installed **from the registry**. If you
+track the git repo — the "nightly" channel — nothing ever tells you a new version exists,
+and it's easy to sit on an old one for months.
+
+So the panel checks for itself: one `GET` to `raw.githubusercontent.com`, at most once a
+day, result cached. **Nothing about you is sent.** When a newer version exists, a small
+green badge appears next to the panel title showing the available version; click it for
+the repository. Turn it off with **Check for updates**.
 
 ## Where did the time go?
 
@@ -253,7 +285,7 @@ panel stays compact. Every row is independently switchable.
 | **Display** | GPU bars · Hide integrated GPU · VRAM graph · Peak VRAM · System RAM |
 | **System** | Swap · CPU · Output disk free · Disk / network rates |
 | **Run** | Progress + ETA · Current node · Queue depth · Run timer · Time-by-node breakdown · Save runs and logs to disk |
-| **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load · Auto-hide alerts |
+| **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load · Auto-hide alerts · Check for updates |
 
 **H** in the header opens run history and alerts. It turns red when there is an unread
 alert. Two tabs — **Runs** and **Alerts** — each with **Export CSV**, **Clear** (that tab
@@ -289,6 +321,13 @@ This extension adds four routes of its own, all under `/amdmonitor/`:
 | `POST /amdmonitor/run/end` | writes the run record, appends `runs.csv`, prunes old runs |
 | `POST /amdmonitor/alert` | appends to `alerts.log` and to the current run's log |
 | `GET /amdmonitor/runs` | reads back saved run records |
+| `GET /amdmonitor/version` | compares the installed version against the repository, at most daily |
+| `GET/POST /amdmonitor/ai/config` | stores the endpoint, model and key. The key is never returned |
+| `POST /amdmonitor/ai/models` | proxies the provider's `/v1/models` so the browser avoids CORS |
+| `POST /amdmonitor/ai/analyse` | builds the request and calls the provider |
+
+The three `ai/` routes do nothing until you configure an endpoint. `version` is the only
+one that reaches the internet without being asked, and it can be switched off.
 
 If psutil is missing the route still answers, reporting `available: false`, and the
 frontend simply hides those rows. Nothing is ever executed.

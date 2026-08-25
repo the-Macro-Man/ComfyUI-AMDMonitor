@@ -38,6 +38,7 @@ import csv
 import json
 import logging
 import os
+import re
 import time
 
 WEB_DIRECTORY = "./js"
@@ -495,6 +496,22 @@ try:
         if not model:
             return web.json_response({"error": "No model selected."})
         user = body.get("prompt") or ""
+
+        # For a failure, the error message alone is often not enough -- the cause
+        # usually sits in the lines just before it. We already captured that run's
+        # log, so send its tail rather than making the user hunt for it.
+        lf = body.get("log_file")
+        if lf:
+            try:
+                path = os.path.join(_base_dir(), "runs", os.path.basename(str(lf)))
+                with open(path, encoding="utf-8", errors="replace") as fh:
+                    tail = fh.readlines()[-60:]
+                if tail:
+                    user += ("\n\nLAST LINES OF THIS RUN'S COMFYUI LOG:\n"
+                             + "".join(tail)[-6000:])
+            except Exception:
+                pass
+
         machine = _machine_facts(body.get("machine"))
         system = SYSTEM_PROMPT + ("\n\n" + machine if machine else "")
         payload = {"model": model, "temperature": 0.2, "stream": False,
@@ -508,6 +525,62 @@ try:
         except Exception:
             return web.json_response({"error": f"Unexpected response: {str(data)[:300]}"})
         return web.json_response({"text": text, "model": model})
+
+    # ── update check ────────────────────────────────────────────────────────
+    #
+    # ComfyUI Manager only flags updates for packs installed FROM the registry.
+    # Anyone tracking the git repo (the "nightly" channel) never sees a prompt,
+    # so they can sit on an old version indefinitely without knowing.
+    #
+    # One GET to raw.githubusercontent.com, at most once a day, cached. Nothing
+    # about the user is sent. Disable with the "Check for updates" toggle.
+
+    VERSION_URL = ("https://raw.githubusercontent.com/the-Macro-Man/"
+                   "ComfyUI-AMDMonitor/main/pyproject.toml")
+
+    def _installed_version():
+        try:
+            p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")
+            with open(p, encoding="utf-8") as fh:
+                m = re.search(r'^version\s*=\s*"([^"]+)"', fh.read(), re.M)
+            return m.group(1) if m else ""
+        except Exception:
+            return ""
+
+    def _newer(a, b):
+        """True if a is a later semantic version than b."""
+        def parts(v):
+            return [int(x) if x.isdigit() else 0 for x in str(v).split(".")[:3]] + [0, 0, 0]
+        return parts(a)[:3] > parts(b)[:3]
+
+    @PromptServer.instance.routes.get("/amdmonitor/version")
+    async def _amdm_version(request):
+        import aiohttp
+        installed = _installed_version()
+        c = _load_cfg()
+        now = time.time()
+        cached, when = c.get("latest", ""), c.get("latest_at", 0)
+
+        if not cached or now - when > 86400:          # at most once a day
+            try:
+                to = aiohttp.ClientTimeout(total=8)
+                async with aiohttp.ClientSession(timeout=to) as s:
+                    async with s.get(VERSION_URL) as r:
+                        if r.status == 200:
+                            txt = await r.text()
+                            m = re.search(r'^version\s*=\s*"([^"]+)"', txt, re.M)
+                            if m:
+                                cached = m.group(1)
+                                c["latest"], c["latest_at"] = cached, now
+                                _save_cfg(c)
+            except Exception:
+                pass                                   # offline is not an error
+
+        return web.json_response({
+            "installed": installed, "latest": cached,
+            "update": bool(installed and cached and _newer(cached, installed)),
+            "url": "https://github.com/the-Macro-Man/ComfyUI-AMDMonitor",
+        })
 
     print(f"[AMDMonitor] loaded - data dir {_base_dir()}"
           + ("" if _HAS_PSUTIL else " (psutil MISSING)"))
