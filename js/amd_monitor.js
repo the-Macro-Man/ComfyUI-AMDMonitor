@@ -174,6 +174,50 @@ const FEATURE_WIDTHS = {
   4096: "wan", 2560: "lumina2 / Z-Image",
 };
 
+/*
+ * Backend detection, and why the wording depends on it.
+ *
+ * When a model doesn't fit, both backends offload weights to system RAM -- but
+ * the consequence differs completely. On ROCm the process is frequently killed
+ * outright ("Fatal Python error: Aborted", no traceback). On CUDA it simply runs
+ * slower.
+ *
+ * So this is not a matter of swapping a vendor name: "CUDA may abort" would be
+ * confidently wrong. The claim itself has to change, and so does the severity --
+ * an emergency on one card is routine on the other, and crying wolf teaches
+ * people to switch the warnings off.
+ */
+let BACKEND = "unknown";        // "rocm" | "cuda" | "unknown"
+
+function detectBackend(sysinfo) {
+  const v = String(sysinfo?.system?.pytorch_version || "").toLowerCase();
+  if (!v) return "unknown";
+  if (v.includes("rocm") || v.includes("hip")) return "rocm";
+  if (v.includes("+cu")) return "cuda";
+  return "unknown";
+}
+
+// Does running out of VRAM kill the process on this backend?
+const aborts = () => BACKEND === "rocm";
+
+// Clause, for use after a dash: "... reached 92% — <clause>."
+function offloadConsequence() {
+  if (BACKEND === "rocm")
+    return "on ROCm this usually ends with the process being killed outright";
+  if (BACKEND === "cuda")
+    return "weights will stream from system RAM, which is far slower";
+  return "further loads will spill to system RAM";
+}
+
+// Standalone sentence, for use after one that already mentions offloading.
+function offloadSentence() {
+  if (BACKEND === "rocm")
+    return "On ROCm the driver then usually kills the process outright.";
+  if (BACKEND === "cuda")
+    return "The run continues, but considerably more slowly.";
+  return "The run continues, but considerably more slowly.";
+}
+
 function explainError(err, rec) {
   const e = String(err || "");
   if (!e) return null;
@@ -199,13 +243,21 @@ function explainError(err, rec) {
       `that belongs to this model in your <code>VAELoader</code>.${model}` };
   }
 
-  if (/Fatal Python error|Aborted/i.test(e) || /loaded partially/i.test(rec?.load || "")) {
+  // rec.load is stored as "partially - 9.5 GB resident, 7.2 GB offloaded",
+  // not "loaded partially" -- matching the log phrasing here never fired.
+  if (/Fatal Python error|Aborted/i.test(e) || /^partially/i.test(rec?.load || "")) {
     const pk = rec?.peak ? ` Peak VRAM reached ${(rec.peak / 1024 ** 3).toFixed(1)} GB.` : "";
-    return { title: "Model too large — the process was killed", body:
-      "The model didn't fit, so weights were offloaded to system RAM, and ROCm " +
-      "aborted the process. There is no traceback because it wasn't a Python " +
-      `error.${pk} Use a smaller quantisation — one that reports ` +
-      "<code>loaded completely</code> — or lower the resolution to free headroom." };
+    const killed = /Fatal Python error|Aborted/i.test(e);
+    return {
+      title: killed ? "Model too large — the process was killed"
+                    : "Model too large for VRAM",
+      body: "The model didn't fit, so weights were offloaded to system RAM. "
+        + (killed
+            ? "The driver then killed the process — there is no traceback because "
+              + "it wasn't a Python error."
+            : offloadSentence())
+        + `${pk} Use a smaller quantisation — one that reports `
+        + "<code>loaded completely</code> — or lower the resolution to free headroom." };
   }
 
   if (/out of memory|OutOfMemory|HIP out of memory/i.test(e)) {
@@ -1020,8 +1072,8 @@ app.registerExtension({
     const ANSI = /\[[0-9;]*m/g;
     const PATTERNS = [
       [/loaded partially/i, "Partial model load",
-       "The model does not fit in VRAM and is being offloaded. On ROCm this is "
-       + "normally followed by a hard abort with no traceback. Use a smaller model."],
+       "The model does not fit in VRAM and is being offloaded — "
+       + offloadConsequence() + ". Use a smaller model."],
       [/out of memory/i, "Out of memory", "The ComfyUI log reported an out-of-memory "
        + "condition."],
     ];
@@ -1263,8 +1315,13 @@ app.registerExtension({
               fmtGB(peak[key])} GB</span>${risky ? " &#9888;" : ""}`;
             if (risky && cfg.warnVram && !warned) {
               warned = true;
-              pushAlert("VRAM critical",
-                `${name} reached ${pk.toFixed(0)}% -- offload risk, ROCm may abort.`);
+              // Critical only where running out actually kills the run. On CUDA
+              // this is a performance note, and a red sticky card would be
+              // crying wolf -- which trains people to disable the warnings that
+              // do matter.
+              const msg = `${name} reached ${pk.toFixed(0)}% — ${offloadConsequence()}.`;
+              if (aborts()) pushAlert("VRAM critical", msg);
+              else toast(`VRAM high — ${msg}`, false);
             }
           }
           html += bar(name, used, total, extraTxt);
@@ -1344,6 +1401,7 @@ app.registerExtension({
       let ok = true;
       try {
         sys = await (await api.fetchApi("/system_stats")).json();
+        if (BACKEND === "unknown") BACKEND = detectBackend(sys);
       } catch (e) { ok = false; }
 
       if (!ok) {

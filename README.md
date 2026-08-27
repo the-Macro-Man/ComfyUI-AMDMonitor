@@ -8,11 +8,18 @@
 
 **[Full documentation →](https://the-macro-man.github.io/ComfyUI-AMDMonitor/)**
 
-VRAM monitoring and run notifications for **AMD / ROCm** GPUs in ComfyUI.
+VRAM monitoring, crash early-warning and per-run analytics for ComfyUI.
 
-Most ComfyUI resource monitors read GPU stats through **pynvml**, which is NVIDIA-only.
-On an AMD card they can show CPU and RAM but never VRAM. This extension shows VRAM,
-peak usage, and tells you when your render finishes.
+Most resource monitors read GPU stats through **pynvml**, which is NVIDIA-only. On an AMD
+card they show CPU and RAM but never VRAM. This one reads ComfyUI's own data instead, so
+it works everywhere.
+
+> **The name says AMD; the extension doesn't care.** It works just as well on NVIDIA and
+> on CPU-only setups — every source it reads is vendor-neutral, and the warnings adapt to
+> the hardware they find. AMD users get VRAM figures nothing else shows them. Everyone
+> gets the run history, per-node timing, crash logs and error explanations, none of which
+> exist elsewhere. It's called AMD Monitor because that's the problem it was built to
+> solve, not the limit of what it does.
 
 It also keeps a record: every run's model, settings, outputs and peak usage, plus the
 ComfyUI log for that run — written to disk as it happens, so it survives the crash.
@@ -395,8 +402,22 @@ Edit `DEFAULTS` at the top of `js/amd_monitor.js`:
 
 ## Compatibility
 
-- Works on **AMD / ROCm** on Windows and Linux.
-- Also works on NVIDIA and CPU-only setups — it reads whatever ComfyUI reports.
+Works on **AMD / ROCm**, **NVIDIA / CUDA** and CPU-only setups, on Windows and Linux.
+Everything it reads — ComfyUI's stats endpoint, its websocket events, its log buffer —
+is vendor-neutral.
+
+**The warnings adapt to the backend, because the hardware behaves differently.** When a
+model doesn't fit, both offload weights to system RAM, but the consequence isn't the same:
+
+| | AMD / ROCm | NVIDIA / CUDA |
+|---|---|---|
+| What happens | the driver usually kills the process | the run continues, slower |
+| Symptom | `Fatal Python error: Aborted`, no traceback | a long render |
+| How it's reported | **critical alert** — this may crash | informational — this will be slow |
+
+Saying "CUDA may abort" would be confidently wrong, and a red alert for something routine
+teaches people to switch off the warnings that matter. So the backend is detected from
+PyTorch's build string and both the wording and the severity follow from it.
 - Uses `psutil`, which ships with ComfyUI. If it is missing, the System rows are hidden
   and everything else still works.
 

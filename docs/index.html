@@ -103,12 +103,15 @@ footer{padding:40px 0 60px;text-align:center;color:var(--faint);font-size:13px;
 
 <header class="wrap">
   <h1>ComfyUI-AMDMonitor</h1>
-  <p>VRAM monitoring, crash early-warning and per-run analytics for
-     <b>AMD&nbsp;/&nbsp;ROCm</b> GPUs in ComfyUI — the numbers NVML-based monitors
-     can never show you.</p>
+  <p>VRAM monitoring, crash early-warning and per-run analytics for ComfyUI —
+     the numbers NVML-based monitors can never show you on an AMD card, and the
+     run analytics nothing shows you on any card.</p>
+  <p style="font-size:15px;max-width:640px;margin:-8px auto 22px;color:var(--faint)">
+     The name says AMD. The extension doesn't care — it works just as well on
+     <b>NVIDIA</b> and CPU-only setups.</p>
   <div class="badges">
     <span class="on">MIT</span><span class="on">No extra installs</span>
-    <span>AMD / ROCm</span><span>Windows &amp; Linux</span><span id="ver">v…</span>
+    <span>AMD / ROCm</span><span>NVIDIA / CUDA</span><span>Windows &amp; Linux</span><span id="ver">v…</span>
   </div>
   <div class="cta">
     <a class="btn p" href="#install">Install</a>
@@ -197,6 +200,12 @@ Fatal Python error: Aborted</code></pre>
     runs of the same 16.9 GB model, the process survived at 7200 MB offloaded and aborted
     at 7553 MB and 8100 MB. A few hundred megabytes decides it — which is exactly why
     clearing VRAM appears to &ldquo;sometimes fix&rdquo; the problem.</div>
+
+  <div class="note"><b>On NVIDIA this section reads differently.</b> Both backends
+    offload weights to system RAM when a model doesn't fit, but on CUDA the run simply
+    continues more slowly rather than being killed. The extension detects the backend
+    and changes both the wording and the severity to match — a red critical alert for
+    something routine would only teach you to switch the warnings off.</div>
 
   <div class="note"><b>ComfyUI reserves more than you expect.</b> On that card
     <code>usable</code> consistently reports 9.8–10.6 GB, never the full 15.9 GB. The
