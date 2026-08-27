@@ -54,6 +54,7 @@ const DEFAULTS = {
   checkUpdates: true,
   updateCheckHours: 6,
   showNodeTimes: true,
+  showPreview: false,
   warnAt: 92,
   alertHideSec: 10,
 };
@@ -413,6 +414,10 @@ app.registerExtension({
       .amdm-kv { display:flex; justify-content:space-between; gap:8px; font-size:10.5px;
                  opacity:.8; font-variant-numeric:tabular-nums; padding:1px 0; }
       .amdm-kv b { font-weight:600; opacity:.95; }
+      .amdm-prev { margin:5px 0 2px; }
+      .amdm-prev img { display:block; width:100%; height:auto; border-radius:5px;
+        border:1px solid #3f3f46; background:#0f0f11; }
+      .amdm-prevhint { margin:5px 0 2px; font-size:10px; opacity:.45; line-height:1.35; }
       .amdm-node { font-size:10px; opacity:.7; white-space:nowrap; overflow:hidden;
                    text-overflow:ellipsis; }
       .amdm-run { color:#52c41a; }
@@ -528,6 +533,7 @@ app.registerExtension({
         ["showProgress", "Progress + ETA"], ["showNode", "Current node"],
         ["showQueue", "Queue depth"], ["showTimer", "Run timer"],
         ["showNodeTimes", "Time-by-node breakdown"],
+        ["showPreview", "Live preview while rendering"],
         ["saveToDisk", "Save runs and logs to disk"],
       ]],
       ["Alerts", [
@@ -998,7 +1004,11 @@ app.registerExtension({
         status.textContent = `${AI.models.length} model(s) available — start typing to filter.`;
       };
       m.querySelectorAll("input[type=checkbox]").forEach((el) => {
-        el.onchange = () => { cfg[el.dataset.k] = el.checked; saveCfg(); render(); };
+        el.onchange = () => {
+          cfg[el.dataset.k] = el.checked;
+          if (el.dataset.k === "showPreview" && !el.checked) dropPreview();
+          saveCfg(); render();
+        };
       });
       m.querySelector(".amdm-reset").onclick = () => {
         peak = {}; peakRam = 0; spark = []; toast("Peak and graph reset");
@@ -1033,6 +1043,9 @@ app.registerExtension({
     // per-node timing, measured from ComfyUI's own `executing` transitions
     let nodeTimes = [], nodeStart = null, lastNode = null;
     let stepTimes = [], lastStep = null, loadInfo = "";
+    // live preview: the object URL currently on screen, and whether any frame
+    // has ever arrived (used to tell "previews are off" from "not started yet")
+    let previewUrl = null, previewSeen = false;
 
     /* ── drag / resize ────────────────────────────────────────────────── */
 
@@ -1151,6 +1164,7 @@ app.registerExtension({
     const onStart = (promptId) => {
       if (running) return;
       running = true; runStart = Date.now(); warned = false;
+      dropPreview();
       peak = {}; peakRam = 0; spark = []; progress = null; curNode = null;
       meta = null; outputs = []; runErr = ""; logFile = "";
       nodeTimes = []; nodeStart = null; lastNode = null;
@@ -1177,6 +1191,7 @@ app.registerExtension({
     const onEnd = (ok, msg) => {
       if (!running) return;
       running = false;
+      dropPreview();                     // the finished image is in the output node
       closeNode();                       // attribute the final node's time
       lastRun = Date.now() - runStart;
       progress = null; curNode = null;
@@ -1282,6 +1297,34 @@ app.registerExtension({
       }
       outputs = [...new Set(outputs)].slice(0, 12);
     });
+    /*
+     * Live preview. ComfyUI broadcasts each preview frame as a binary websocket
+     * message; this is the same stream the node preview uses, shown in the panel
+     * instead so it stays visible wherever the canvas happens to be scrolled.
+     *
+     * Nothing arrives unless the user has enabled a preview method in ComfyUI's
+     * own settings, hence previewSeen -- an empty box looks broken, a hint does
+     * not.
+     */
+    const dropPreview = () => {
+      // Every createObjectURL pins its Blob in memory until revoked. Replacing
+      // the src alone would leave every earlier frame resident for the life of
+      // the tab -- invisible, and unbounded over a long session.
+      if (previewUrl) { URL.revokeObjectURL(previewUrl); previewUrl = null; }
+    };
+
+    api.addEventListener("b_preview", (e) => {
+      if (!cfg.showPreview) return;
+      const blob = e?.detail;
+      if (!(blob instanceof Blob)) return;
+      previewSeen = true;
+      const next = URL.createObjectURL(blob);
+      dropPreview();                       // release the frame we are replacing
+      previewUrl = next;
+      const img = box.querySelector(".amdm-prev img");
+      if (img) img.src = next;             // otherwise render() picks it up
+    });
+
     api.addEventListener("progress", (e) => {
       const d = e?.detail || {};
       if (typeof d.value === "number" && typeof d.max === "number" && d.max > 0) {
@@ -1404,6 +1447,14 @@ app.registerExtension({
       }
       if (cfg.showNode && curNode)
         runBits.push(`<div class="amdm-node">&#9654; ${esc(curNode)}</div>`);
+      if (cfg.showPreview && running) {
+        runBits.push(previewUrl
+          ? `<div class="amdm-prev"><img src="${previewUrl}" alt="preview"></div>`
+          : `<div class="amdm-prevhint">${previewSeen
+              ? "waiting for the first frame…"
+              : "No preview received — enable a preview method in ComfyUI's settings."
+            }</div>`);
+      }
       if (cfg.showQueue && queue > 0)
         runBits.push(`<div class="amdm-kv"><span>queued</span><b>${queue}</b></div>`);
       if (cfg.showTimer) {

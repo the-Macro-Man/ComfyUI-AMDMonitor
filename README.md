@@ -60,6 +60,7 @@ No custom nodes. Nothing to install beyond the extension itself.
 - **Progress + ETA** — step *k of n* with a live estimate of time remaining
 - **Current node** — the executing node's real name, read from the running prompt
 - **Queue depth** and **run timer**
+- **Live preview** — watch the image form in the panel, wherever the canvas is scrolled
 - **Time by node** — a measured breakdown of where a run's time actually went, so a
   slow generation points at its own bottleneck
 - **Seconds per step** — median, so one stall doesn't skew it
@@ -278,6 +279,26 @@ Turn the network check off with **Check for updates** and the installed version 
 shown — it's read from `pyproject.toml` at runtime, so it can't drift from what you
 actually have.
 
+## Live preview
+
+ComfyUI shows preview frames on the sampler node — which is no help if you've scrolled
+somewhere else on the canvas. Tick **Live preview while rendering** and the same frames
+appear in the panel, next to the VRAM graph and the ETA.
+
+It uses ComfyUI's own preview stream, so **you must have previews enabled in ComfyUI**
+(Settings → search "preview", or launch with `--preview-method latent2rgb`). If nothing
+is arriving the panel says so rather than showing an empty box.
+
+`latent2rgb` is the cheap method and the one to use if VRAM is tight — it approximates
+colours straight from the latent. `taesd` looks considerably better but loads another
+model and decodes on every step.
+
+Off by default, and it costs nothing while off: the listener does no work and frames are
+released as they're replaced, so a long session doesn't accumulate images you can't see.
+
+Worth knowing: a distilled model at 8 steps gives you 8 frames, so previews earn their
+keep on long renders — video especially — rather than quick images.
+
 ## Where did the time go?
 
 Every run records a measured breakdown, taken from ComfyUI's own node-transition events
@@ -307,7 +328,7 @@ panel stays compact. Every row is independently switchable.
 |---|---|
 | **Display** | GPU bars · Hide integrated GPU · VRAM graph · Peak VRAM · System RAM |
 | **System** | Swap · CPU · Output disk free · Disk / network rates |
-| **Run** | Progress + ETA · Current node · Queue depth · Run timer · Time-by-node breakdown · Save runs and logs to disk |
+| **Run** | Progress + ETA · Current node · Live preview while rendering · Queue depth · Run timer · Time-by-node breakdown · Save runs and logs to disk |
 | **Alerts** | Notify on finish · Notify on error · Sound · Warn at high VRAM · Warn on partial model load · Auto-hide alerts · Check for updates |
 
 **H** in the header opens run history and alerts. It turns red when there is an unread
