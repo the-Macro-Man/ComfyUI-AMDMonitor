@@ -234,6 +234,29 @@ function explainError(err, rec) {
       `or load the diffusion model that goes with the encoder you have.${model}` };
   }
 
+  /*
+   * The same encoder mismatch surfaces through a normalisation layer rather
+   * than a matmul, and reads completely differently:
+   *   Given normalized_shape=[2560], expected input with shape [*, 2560],
+   *   but got input of size [1, 36, 135, 1536]
+   * The width the model wants is in normalized_shape; what it got is the last
+   * dimension of the actual size.
+   */
+  m = e.match(/normalized_shape=\[(\d+)\][\s\S]*?got input of size \[([^\]]+)\]/i);
+  if (m) {
+    const want = +m[1];
+    const dims = m[2].split(",").map((x) => parseInt(x.trim(), 10)).filter(Number.isFinite);
+    const got = dims.length ? dims[dims.length - 1] : null;
+    const wn = FEATURE_WIDTHS[want], gn = got != null ? FEATURE_WIDTHS[got] : null;
+    return { title: "Text encoder doesn't match the model", body:
+      `The model expects conditioning <b>${want}</b> wide${wn ? ` (${wn})` : ""}, ` +
+      (got != null
+        ? `but the encoder produced <b>${got}</b>${gn ? ` (${gn})` : ""}. `
+        : "but got something else. ") +
+      (wn ? `Load the <b>${wn}</b> text encoder, ` : "Load the matching text encoder, ") +
+      `or switch to the diffusion model that goes with the encoder you have.${model}` };
+  }
+
   m = e.match(/size of tensor a \((\d+)\) must match the size of tensor b \((\d+)\)/i);
   if (m) {
     return { title: "VAE doesn't match the model", body:

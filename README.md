@@ -186,7 +186,8 @@ becomes
 > token (Krea2 (Qwen3-VL 4B)), but the model expects 12288 (flux2). Set your text
 > encoder to flux2, or load the diffusion model that goes with the encoder you have.
 
-Recognised today: text-encoder mismatch, VAE/model mismatch, ROCm abort from a partial
+Recognised today: text-encoder mismatch (in both the `mat1/mat2` and `normalized_shape`
+phrasings), VAE/model mismatch, driver abort from a partial
 load, out of memory, remote-encoder payload limit, and missing files or dropdown values.
 Anything else falls through to the optional AI analysis.
 
