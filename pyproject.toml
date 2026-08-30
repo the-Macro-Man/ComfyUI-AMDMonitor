@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-amdmonitor"
 description = "Works on AMD AND NVIDIA - the name is where it started, not what it supports. VRAM monitoring, crash early-warning and per-run analytics for ComfyUI. NVML-based monitors show no VRAM at all on an AMD card; this reads ComfyUI's own data instead, so it works everywhere, and the warnings adapt to the backend it finds. Everyone gets: time-by-node breakdown showing exactly where a run's minutes went, run history with model, LoRAs, settings, outputs and peak usage, per-run logs written to disk as the run happens so they survive a crash, plain-English explanations of ComfyUI's cryptic errors, progress with ETA, swap, CPU and output-disk monitoring, and optional AI analysis over your own Ollama or any OpenAI-compatible endpoint. AMD users additionally get VRAM figures and partial-load crash warnings that nothing else provides."
-version = "1.7.0"
+version = "1.7.1"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.9"

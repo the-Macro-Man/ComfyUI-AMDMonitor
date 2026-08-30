@@ -930,7 +930,7 @@ app.registerExtension({
               explanations work regardless and never use the network.</p>
             <label class="amdm-f"><span>Endpoint</span>
               <input class="amdm-base" type="text" spellcheck="false"
-                placeholder="http://192.168.1.182:11434  ·  https://openrouter.ai/api/v1"
+                placeholder="http://localhost:11434  ·  https://openrouter.ai/api/v1"
                 value="${esc(AI.base)}"></label>
             <label class="amdm-f"><span>API key</span>
               <input class="amdm-key" type="password" spellcheck="false"

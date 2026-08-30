@@ -200,7 +200,7 @@ Works with anything speaking the OpenAI-compatible API:
 
 | Provider | Endpoint | Key |
 |---|---|---|
-| Ollama (local or LAN) | `http://192.168.1.182:11434` | none |
+| Ollama (local or LAN) | `http://localhost:11434` or `http://<lan-ip>:11434` | none |
 | LM Studio | `http://localhost:1234/v1` | none |
 | OpenRouter | `https://openrouter.ai/api/v1` | required |
 | OpenAI | `https://api.openai.com/v1` | required |
@@ -445,6 +445,19 @@ PyTorch's build string and both the wording and the severity follow from it.
 
 If the panel doesn't appear, open the browser console (F12) and look for
 `[AMDMonitor] ready`.
+
+## Changelog
+
+Full version history is on the
+[Comfy Registry page](https://registry.comfy.org/nodes/comfyui-amdmonitor).
+
+**1.7.1**
+- The AI endpoint example is now `http://localhost:11434` (Ollama's own default)
+  rather than a specific LAN address, in the README, the docs site and the
+  settings placeholder. No behaviour change.
+
+**1.7.0**
+- Live preview: see each step render instead of waiting for the final frame.
 
 ## Licence
 
